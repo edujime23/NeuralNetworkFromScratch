@@ -142,27 +142,28 @@ class EvolutionaryNeuralNetwork:
     def evaluate_fitness(self, 
                          inputs: List[Tuple[float, ...]], 
                          outputs: List[Tuple[float, ...]]) -> np.float64:
-        total_error = np.float64(0.0)
-        for input_data, output_data in zip(inputs, outputs):
-            prediction = self.activate(input_data)
-            total_error += self.cost(prediction, list(map(np.float64, output_data)))
-        return total_error  # Return the total error without normalization
+        total_error = []
+        for _ in range(3):
+            for input_data, output_data in zip(inputs, outputs):
+                prediction = self.activate(input_data)
+                total_error.append(self.cost(prediction, list(map(np.float64, output_data))))
+        return np.mean(total_error)  # Return the total error without normalization
 
     @staticmethod
     def _fitness_worker(args):
         net: EvolutionaryNeuralNetwork = args[0]
         fitness = net.evaluate_fitness(args[1], args[2])
-        return fitness
+        return (net, fitness)
     
     def train(self, 
-              inputs: List[Tuple[float, ...]], 
-              outputs: List[Tuple[float, ...]], 
-              generations: int, 
-              population_size: int, 
-              elitism: float = 0.2, 
-              mutation_rate: float = 0.1, 
-              mutation_strength: float = 0.1,
-              learning_rate: float = 0.01) -> None:
+          inputs: List[Tuple[float, ...]], 
+          outputs: List[Tuple[float, ...]], 
+          generations: int, 
+          population_size: int, 
+          elitism: float = 0.2, 
+          mutation_rate: float = 0.1, 
+          mutation_strength: float = 0.1,
+          learning_rate: float = 0.01) -> None:
         population = [self.clone() for _ in range(population_size)]
         elite_count = max(1, int(elitism * population_size))
         
@@ -179,13 +180,14 @@ class EvolutionaryNeuralNetwork:
             fitness_scores.wait()
             fitness_scores = fitness_scores.get()
             
-            sorted_indices = np.argsort(fitness_scores)
-            population = [population[i] for i in sorted_indices]
-            current_best_fitness = fitness_scores[sorted_indices[0]]
+            fitness_scores.sort(key=lambda x: x[1])
             
-            print(f"Generation {gen}: Best fitness = {current_best_fitness}")
+            population = [i[0] for i in fitness_scores]
+            current_best_fitness = fitness_scores[0]
             
-            if best_fitness is None or current_best_fitness < best_fitness:
+            print(f"Generation {gen}: Best fitness = {current_best_fitness[1]}")
+            
+            if best_fitness is None or current_best_fitness[1] < best_fitness[1]:
                 best_network = population[0].clone()
                 best_fitness = current_best_fitness
                 stagnant_generations = 0
