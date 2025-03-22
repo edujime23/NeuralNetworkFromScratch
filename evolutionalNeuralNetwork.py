@@ -29,9 +29,7 @@ class EvolutionaryNeuralNetwork:
     def error(self, outputs: List[np.float64], expected: List[np.float64]) -> np.float64:
         outputs = np.array(outputs, dtype=np.float64)
         expected = np.array(expected, dtype=np.float64)
-        mean = np.sum((outputs - expected)**2)
-        
-        return mean
+        return np.sum((outputs - expected)**2)
     
     def derivative(self, activation: Callable[[np.float64], np.float64], x: np.float64, *, dx: np.float64 = np.float64(10e-8)) -> np.float64:
         a1 = activation(x + dx)
@@ -53,25 +51,31 @@ class EvolutionaryNeuralNetwork:
             raise TypeError("input_size and output_size must be ints")
         if input_size <= 0 or output_size <= 0 or any(x <= 0 for x in hidden_size):
             raise ValueError("input_size, output_size, and all elements in hidden_size must be positive integers")
-        
+
         if activation_functions is not None:
             activation_functions = tuple(self.sigmoid if func is None else func for func in activation_functions)
             self.activation_functions = itertools.cycle(activation_functions)
         else:
             self.activation_functions = itertools.cycle([self.sigmoid])
-        
+
         if cost_function is not None and not callable(cost_function):
             raise TypeError("cost_function must be callable")
-        self.cost = cost_function if cost_function else self.error
-        
+        self.cost = cost_function or self.error
+
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.output_size = output_size
         self.threshold = np.float64(threshold)
-        
+
         self.layers: List[Layer] = [Layer(self.input_size, self.input_size, None)]
-        for i in range(len(self.hidden_size)):
-            self.layers.append(Layer(self.hidden_size[i], self.hidden_size[i-1] if i > 0 else self.input_size, next(self.activation_functions)))
+        self.layers.extend(
+            Layer(
+                self.hidden_size[i],
+                self.hidden_size[i - 1] if i > 0 else self.input_size,
+                next(self.activation_functions),
+            )
+            for i in range(len(self.hidden_size))
+        )
         self.layers.append(Layer(self.output_size, self.hidden_size[-1] if self.hidden_size else self.input_size, next(self.activation_functions)))
     
     def activate(self, inputs: Tuple[float]) -> List[np.float64]:
@@ -99,25 +103,25 @@ class EvolutionaryNeuralNetwork:
                 neuron_clone.bias = neuron_self.bias
         return cloned
     
-    def crossover(parent1: Self, parent2: Self) -> Self:
+    def crossover(self, parent2: Self) -> Self:
         """Create a child network by combining properties of two parent networks."""
-        child = parent1.clone()
-        
+        child = self.clone()
+
         # Randomly choose which parent's weights to take
-        for i in range(len(parent1.layers)):
-            for j in range(len(parent1.layers[i].neurons)):
-                parent1_neuron = parent1.layers[i].neurons[j]
+        for i in range(len(self.layers)):
+            for j in range(len(self.layers[i].neurons)):
+                parent1_neuron = self.layers[i].neurons[j]
                 parent2_neuron = parent2.layers[i].neurons[j]
                 child_neuron = child.layers[i].neurons[j]
-                
+
                 # Perform crossover on weights and biases
                 crossover_point = np.random.randint(0, len(parent1_neuron.weights))
                 child_neuron.weights[:crossover_point] = parent1_neuron.weights[:crossover_point]
                 child_neuron.weights[crossover_point:] = parent2_neuron.weights[crossover_point:]
-                
+
                 # You can similarly crossover biases if desired
                 child_neuron.bias = np.random.choice([parent1_neuron.bias, parent2_neuron.bias])
-        
+
         return child
     
     def mutate(self, mutation_rate: float, mutation_strength: float = 0.1, learning_rate: float = 0.01) -> None:
@@ -166,27 +170,27 @@ class EvolutionaryNeuralNetwork:
           learning_rate: float = 0.01) -> None:
         population = [self.clone() for _ in range(population_size)]
         elite_count = max(1, int(elitism * population_size))
-        
+
         best_fitness = None
         best_network = None
         stagnant_generations = 0
-        
+
         pool = Pool(processes=cpu_count())
-        
-        for gen in range(int(generations)):
+
+        for gen in range(generations):
             args = [(net, inputs, outputs) for net in population]
-            
+
             fitness_scores = pool.map_async(EvolutionaryNeuralNetwork._fitness_worker, args)
             fitness_scores.wait()
             fitness_scores = fitness_scores.get()
-            
+
             fitness_scores.sort(key=lambda x: x[1])
-            
+
             population = [i[0] for i in fitness_scores]
             current_best_fitness = fitness_scores[0]
-            
+
             print(f"Generation {gen}: Best fitness = {current_best_fitness[1]}")
-            
+
             if best_fitness is None or current_best_fitness[1] < best_fitness[1]:
                 best_network = population[0].clone()
                 best_fitness = current_best_fitness
@@ -195,12 +199,12 @@ class EvolutionaryNeuralNetwork:
                 break
             else:
                 stagnant_generations += 1
-            
+
             if stagnant_generations >= 10:
                 mutation_strength /= 2
                 print(f"Mutation strength adjusted to {mutation_strength}")
                 stagnant_generations = 0
-            
+
             elites = population[:elite_count]
             offspring = []
             while len(offspring) < (population_size - elite_count):
@@ -210,9 +214,9 @@ class EvolutionaryNeuralNetwork:
                 child.mutate(mutation_rate, mutation_strength, learning_rate)
                 offspring.append(child)
             population = elites + offspring
-        
+
         self.copy_from(best_network)
-        
+
         pool.close()
         pool.join()
 
@@ -221,7 +225,7 @@ if __name__ == "__main__":
     xor_expected = [(0,), (1,), (1,), (0,)]
 
     input_size = 2
-    hidden_size = (6,)
+    hidden_size = (24,)
     output_size = 1
     threshold = 1  
     activation_functions = (np.tanh,None)  # Specify activation functions for each layer
