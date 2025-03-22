@@ -1,5 +1,5 @@
 import pickle
-from utils import *
+from utils import ActivationFunctions, CostFunctions, Layer, DenseLayer, InputLayer
 
 # Neural Network class
 class NeuralNetwork:
