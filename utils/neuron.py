@@ -11,6 +11,7 @@ class Neuron:
         self.bias = 0
         self.signal = 0
         self.error_signal = 0
+        self.gradients = []  # New attribute for weight gradients
 
         # Adam optimizer values
         self.first_moment = []
@@ -33,6 +34,7 @@ class Neuron:
             self.bias = random.gauss(0, std)
             self.first_moment = [0.0 for _ in range(num_inputs)]
             self.second_moment = [0.0 for _ in range(num_inputs)]
+            self.gradients = [0.0 for _ in range(num_inputs)]  # Initialize gradients for weights
 
     def activate(self, inputs, threshold):
         signal_sum = self.bias + sum(w * i for w, i in zip(self.weights, inputs))

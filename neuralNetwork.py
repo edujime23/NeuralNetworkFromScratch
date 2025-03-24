@@ -1,23 +1,32 @@
 import pickle
-from utils import ActivationFunctions, CostFunctions, Layer, DenseLayer, InputLayer
+from utils.functions import ActivationFunctions,CostFunctions
+from utils.layers import Layer,InputLayer,DenseLayer,OutputLayer
 
 # Neural Network class
 class NeuralNetwork:
-    def __init__(self, sizes, layers_types, activation_functions, cost_function, threshold=1.0, dropout_rate=1/2, batch_norm=False, gradient_clip=1.0):
-        self.input_size = sizes[0]
-        self.hidden_layers = sizes[1:-1]
+    def __init__(self, sizes, layers_types, activation_functions, cost_function, 
+                 threshold=1.0, dropout_rate=1/2, batch_norm=False, gradient_clip=1.0):
+        self.sizes = sizes
         self.layers_types = layers_types
         self.activation_functions = activation_functions
         self.cost_function = cost_function
         self.threshold = threshold
         self.layers: list[Layer] = []
         self.gradient_clip = gradient_clip
+        self.dropout_rate = dropout_rate
+        self.batch_norm = batch_norm
 
-        self.layers.append(InputLayer(self.input_size))
+        self.layers.append(InputLayer(self.sizes[0]))
+        self._initialize_layers(sizes, self.dropout_rate, self.batch_norm, threshold)
 
-        for i in range(1, len(sizes)):
+    def _initialize_layers(self, sizes, dropout_rate, batch_norm, threshold):
+        for i in range(1, len(sizes) - 1):
             act_func = self.activation_functions[(i - 1) % len(self.activation_functions)]
-            self.layers.append(self.layers_types[(i - 1) % len(self.layers_types)](sizes[i], sizes[i - 1], act_func, dropout_rate, batch_norm, threshold))
+            self.layers.append(self.layers_types[i % len(self.layers_types)](
+                sizes[i], sizes[i - 1], act_func, dropout_rate, batch_norm, threshold))
+        # Add the output layer
+        act_func = self.activation_functions[-1]
+        self.layers.append(OutputLayer(sizes[-1], sizes[-2], act_func))
 
     def activate(self, inputs, training=True):
         for i, neuron in enumerate(self.layers[0].neurons):
@@ -72,65 +81,38 @@ class NeuralNetwork:
 
     def _update_weights_and_biases(self, learning_rate, beta1, beta2, epsilon, lambda_l1, lambda_l2):
         for layer_idx in range(1, len(self.layers)):
-          self.layers[layer_idx]._update_weights_and_biases(self.layers[layer_idx - 1].neurons, learning_rate, beta1, beta2, epsilon, lambda_l1, lambda_l2, self.gradient_clip)
+            for neuron in self.layers[layer_idx].neurons:
+                neuron.gradients = self._clip_gradients(neuron.gradients)
+            self.layers[layer_idx]._update_weights_and_biases(self.layers[layer_idx - 1].neurons, 
+                                                            learning_rate, beta1, beta2, epsilon, 
+                                                            lambda_l1, lambda_l2, self.gradient_clip)
 
-    def train(self, inputs_list, outputs_list, validation_inputs=None, validation_outputs=None, epochs=10000, batch_size=32):
+    def _clip_gradients(self, gradients):
+        return [max(min(g, self.gradient_clip), -self.gradient_clip) for g in gradients]
+
+    def train(self, inputs_list, outputs_list, validation_inputs=None, validation_outputs=None, epochs=10000, batch_size=32, callback=None):
+        costs = []
+        gradients = []
         for epoch in range(1, epochs + 1):
             epoch_loss = 0
+            epoch_gradients = 0
             for i in range(0, len(inputs_list), batch_size):
                 batch_inputs = inputs_list[i:i + batch_size]
                 batch_outputs = outputs_list[i:i + batch_size]
                 for inputs, outputs in zip(batch_inputs, batch_outputs):
                     self.backpropagate(inputs, outputs, 10/epochs)
+                    epoch_gradients += sum(abs(neuron.error_signal) for layer in self.layers for neuron in layer.neurons)
             
             # Compute training loss
             epoch_loss = sum(self.cost_function(self.activate(inputs), outputs) for inputs, outputs in zip(inputs_list, outputs_list)) / len(inputs_list)
+            costs.append(epoch_loss)
+            gradients.append(epoch_gradients / len(inputs_list))
 
             # Compute validation loss if provided
+            validation_loss = None
             if validation_inputs and validation_outputs:
                 validation_loss = sum(self.cost_function(self.activate(inputs), outputs) for inputs, outputs in zip(validation_inputs, validation_outputs)) / len(validation_inputs)
-                print(f"Epoch {epoch+1}/{epochs}, Training Loss: {epoch_loss:.4f}, Validation Loss: {validation_loss:.4f}")
-            else:
-                print(f"Epoch {epoch+1}/{epochs}, Training Loss: {epoch_loss:.4f}")
 
-    def save_model(self, filename):
-        # Save the entire neural network object (including weights, biases, etc.) to a file
-        with open(filename, 'wb') as f:
-            pickle.dump(self, f)
-        print(f"Model saved to {filename}")
-        
-    @staticmethod
-    def load_model(filename):
-        # Load the entire neural network object from a file
-        with open(filename, 'rb') as f:
-            print(f"Model loaded from {filename}")
-            return pickle.load(f)
-        
-
-
-
-if __name__ == "__main__":
-    inputs = [[0, 0], [0, 1], [1, 0], [1, 1]]
-    outputs = [[0], [1], [1], [0]]
-
-    # Example validation set (you can modify this)
-    validation_inputs = [[0, 0], [1, 1]]
-    validation_outputs = [[0], [0]]
-
-    nn = NeuralNetwork([2, 8, 4, 2, 1], [DenseLayer], [ActivationFunctions.leaky_relu, ActivationFunctions.sigmoid],
-                       CostFunctions.cross_entropy, threshold=1.0, dropout_rate=1/4, batch_norm=True)
-
-    # Train the model
-    nn.train(inputs, outputs, validation_inputs, validation_outputs, epochs=10000, batch_size=2)
-
-    # Save the model
-    nn.save_model('model.pkl')
-    
-    del nn
-
-    # Load the model
-    nn = NeuralNetwork.load_model('model.pkl')
-
-    # Test the loaded model
-    for inp in inputs:
-        print("Input:", inp, "Output:", nn.activate(inp))
+            # Call the universal callback if provided
+            if callback:
+                callback(epoch, epochs, epoch_loss, validation_loss, costs, gradients)
