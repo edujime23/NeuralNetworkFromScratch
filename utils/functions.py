@@ -73,3 +73,4 @@ class ActivationFunctions:
     def derivative(func: Callable[[np.ndarray], np.ndarray], x: np.ndarray, dx: float = 1e-6) -> np.ndarray:
         """Calculate the derivative of a function using the limit definition."""
         return (func(x + dx) - func(x)) / dx
+    

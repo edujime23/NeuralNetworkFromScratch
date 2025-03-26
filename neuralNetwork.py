@@ -64,12 +64,8 @@ class NeuralNetwork:
 
     def _forward_pass(self, inputs):
         res = inputs
-        res = self.layers[0].forward(res)  # Forward pass through first layer
-
-        # Pass through subsequent layers
-        for idx, layer in enumerate(self.layers[1:], start=1):
+        for layer in self.layers:
             res = layer.forward(res)
-
         return res
 
 
