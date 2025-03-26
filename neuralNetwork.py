@@ -1,118 +1,115 @@
 import pickle
-from utils.functions import ActivationFunctions,CostFunctions
-from utils.layers import Layer,InputLayer,DenseLayer,OutputLayer
+import numpy as np
+import utils
 
 # Neural Network class
 class NeuralNetwork:
-    def __init__(self, sizes, layers_types, activation_functions, cost_function, 
-                 threshold=1.0, dropout_rate=1/2, batch_norm=False, gradient_clip=1.0):
-        self.sizes = sizes
-        self.layers_types = layers_types
-        self.activation_functions = activation_functions
+    def __init__(self, layers, cost_function, threshold=1.0, gradient_clip=1.0, learning_rate=0.001):
+        self.layers: list[utils.Layer] = layers
         self.cost_function = cost_function
         self.threshold = threshold
-        self.layers: list[Layer] = []
         self.gradient_clip = gradient_clip
-        self.dropout_rate = dropout_rate
-        self.batch_norm = batch_norm
+        self.loss = utils.Loss(cost_function)  # Initialize loss attribute with Loss class
+        self.optimizer = utils.AdamOptimizer(learning_rate=learning_rate)  # Initialize optimizer attribute with learning rate
+        self.metrics = []  # Initialize metrics attribute
 
-        self.layers.append(InputLayer(self.sizes[0]))
-        self._initialize_layers(sizes, self.dropout_rate, self.batch_norm, threshold)
+    def compile(self, optimizer=None, loss=None, metrics=None):
+        if optimizer:
+            self.optimizer = optimizer
+        for layer in self.layers:
+            layer._init_optimizer(self.optimizer)
+        if loss:
+            self.loss = utils.Loss(loss)
+        if metrics:
+            self.metrics = metrics
 
-    def _initialize_layers(self, sizes, dropout_rate, batch_norm, threshold):
-        for i in range(1, len(sizes) - 1):
-            act_func = self.activation_functions[(i - 1) % len(self.activation_functions)]
-            self.layers.append(self.layers_types[i % len(self.layers_types)](
-                sizes[i], sizes[i - 1], act_func, dropout_rate, batch_norm, threshold))
-        # Add the output layer
-        act_func = self.activation_functions[-1]
-        self.layers.append(OutputLayer(sizes[-1], sizes[-2], act_func))
+    def fit(self, x, y, epochs=1, batch_size=32, validation_data=None, callbacks=None):
+        x, y = np.array(x), np.array(y)
+        if validation_data:
+            validation_data = (np.array(validation_data[0]), np.array(validation_data[1]))
+        callbacks = callbacks or []
+        for callback in callbacks:
+            if isinstance(callback, utils.Callback):
+                callback.on_train_begin()
+        for epoch in range(epochs):
+            for callback in callbacks:
+                if isinstance(callback, utils.Callback):
+                    callback.on_epoch_begin(epoch)
+            self._train_on_batch(x, y, batch_size, callbacks)
+            logs = self._get_logs(x, y, validation_data)
+            for callback in callbacks:
+                if isinstance(callback, utils.Callback):
+                    callback.on_epoch_end(epoch, logs=logs)
+        for callback in callbacks:
+            if isinstance(callback, utils.Callback):
+                callback.on_train_end()
 
-    def activate(self, inputs, training=True):
-        for i, neuron in enumerate(self.layers[0].neurons):
-            neuron.signal = inputs[i]
+    def _train_on_batch(self, x, y, batch_size, callbacks):
+        for i in range(0, len(x), batch_size):
+            batch_x = x[i:i + batch_size]
+            batch_y = y[i:i + batch_size]
+            for callback in callbacks:
+                if isinstance(callback, utils.Callback):
+                    callback.on_batch_begin(i // batch_size)
+            self._train_step(batch_x, batch_y)
+            for callback in callbacks:
+                if isinstance(callback, utils.Callback):
+                    callback.on_batch_end(i // batch_size)
 
-        for i in range(1, len(self.layers)):
-            prev_layer_signals = [neuron.signal for neuron in self.layers[i - 1].neurons]
-            for neuron in self.layers[i].neurons:
-                neuron.activate(prev_layer_signals, self.threshold)
-            self.layers[i].activate(prev_layer_signals, training) # Pass training argument
+    def _train_step(self, x, y):
+        for inputs, targets in zip(x, y):
+            self._forward_pass(inputs)
+            self._backward_pass(targets)
+            self._update_weights()
 
-        return [neuron.signal for neuron in self.layers[-1].neurons]
+    def _forward_pass(self, inputs):
+        res = inputs
+        res = self.layers[0].forward(res)  # Forward pass through first layer
 
-    def __limit_derivative(self, func, x, epsilon=1e-5):
-        """Hidden method to compute the derivative using the limit definition"""
-        return (func(x + epsilon) - func(x)) / epsilon
+        # Pass through subsequent layers
+        for idx, layer in enumerate(self.layers[1:], start=1):
+            res = layer.forward(res)
 
-    def backpropagate(self, inputs, expected_outputs, learning_rate=1e-3, beta1=0.9, beta2=0.999, epsilon=1e-8, lambda_l1=0.0, lambda_l2=0.0):
-        """
-        Backpropagates the error, updates weights/biases with Adam, and applies L1/L2 regularization for a single training example.
+        return res
 
-        Args:
-            inputs (list): Input values for a single example.
-            expected_outputs (list): Expected output values for a single example.
-            learning_rate (float): Learning rate for the Adam optimizer.
-            beta1 (float): Beta1 parameter for Adam.
-            beta2 (float): Beta2 parameter for Adam.
-            epsilon (float): Epsilon parameter for Adam.
-            lambda_l1 (float): L1 regularization parameter.
-            lambda_l2 (float): L2 regularization parameter.
-        """
-        self.activate(inputs)
-        self._calculate_output_layer_error(expected_outputs)
-        self._backpropagate_hidden_layers_error()
-        self._update_weights_and_biases(learning_rate, beta1, beta2, epsilon, lambda_l1, lambda_l2)
 
-    def _calculate_output_layer_error(self, expected_outputs):
-        """Calculates the error signal for the output layer."""
-        output_layer = self.layers[-1]
-        for i, neuron in enumerate(output_layer.neurons):
-            error = neuron.signal - expected_outputs[i]
-            neuron.error_signal = error * self.__limit_derivative(neuron.activation_function, neuron.signal)
+    def _backward_pass(self, targets):
+        grad = self.loss.backward(self.layers[-1].signals, targets)
+        for layer in reversed(self.layers):
+            grad = layer.backward(grad)
 
-    def _backpropagate_hidden_layers_error(self):
-        """Backpropagates the error signal through the hidden layers."""
-        for layer_idx in range(len(self.layers) - 2, 0, -1):
-            current_layer = self.layers[layer_idx]
-            next_layer = self.layers[layer_idx + 1]
-            for i, neuron in enumerate(current_layer.neurons):
-                error_signal = sum(next_neuron.error_signal * next_neuron.weights[i] for next_neuron in next_layer.neurons if i < len(next_neuron.weights))
-                neuron.error_signal = error_signal * self.__limit_derivative(neuron.activation_function, neuron.signal)
+    def _update_weights(self):
+        for layer in self.layers:
+            layer.update()
 
-    def _update_weights_and_biases(self, learning_rate, beta1, beta2, epsilon, lambda_l1, lambda_l2):
-        for layer_idx in range(1, len(self.layers)):
-            for neuron in self.layers[layer_idx].neurons:
-                neuron.gradients = self._clip_gradients(neuron.gradients)
-            self.layers[layer_idx]._update_weights_and_biases(self.layers[layer_idx - 1].neurons, 
-                                                            learning_rate, beta1, beta2, epsilon, 
-                                                            lambda_l1, lambda_l2, self.gradient_clip)
+    def _get_logs(self, x, y, validation_data):
+        logs = {'loss': self._evaluate(x, y)}
+        if validation_data:
+            val_x, val_y = validation_data
+            logs['val_loss'] = self._evaluate(val_x, val_y)
+        for metric in self.metrics:
+            metric_fn = getattr(utils.Metrics, metric)
+            logs[metric] = metric_fn(self.predict(x), y)
+            if validation_data:
+                logs[f'val_{metric}'] = metric_fn(self.predict(val_x), val_y)
+        return logs
 
-    def _clip_gradients(self, gradients):
-        return [max(min(g, self.gradient_clip), -self.gradient_clip) for g in gradients]
+    def _evaluate(self, x, y):
+        total_loss = 0
+        for inputs, targets in zip(x, y):
+            outputs = self._forward_pass(inputs)
+            total_loss += self.loss(outputs, targets)
+        return total_loss / len(x)
 
-    def train(self, inputs_list, outputs_list, validation_inputs=None, validation_outputs=None, epochs=10000, batch_size=32, callback=None):
-        costs = []
-        gradients = []
-        for epoch in range(1, epochs + 1):
-            epoch_loss = 0
-            epoch_gradients = 0
-            for i in range(0, len(inputs_list), batch_size):
-                batch_inputs = inputs_list[i:i + batch_size]
-                batch_outputs = outputs_list[i:i + batch_size]
-                for inputs, outputs in zip(batch_inputs, batch_outputs):
-                    self.backpropagate(inputs, outputs, 10/epochs)
-                    epoch_gradients += sum(abs(neuron.error_signal) for layer in self.layers for neuron in layer.neurons)
-            
-            # Compute training loss
-            epoch_loss = sum(self.cost_function(self.activate(inputs), outputs) for inputs, outputs in zip(inputs_list, outputs_list)) / len(inputs_list)
-            costs.append(epoch_loss)
-            gradients.append(epoch_gradients / len(inputs_list))
+    def predict(self, x):
+        x = np.array(x)
+        return [self._forward_pass(inputs) for inputs in x]
 
-            # Compute validation loss if provided
-            validation_loss = None
-            if validation_inputs and validation_outputs:
-                validation_loss = sum(self.cost_function(self.activate(inputs), outputs) for inputs, outputs in zip(validation_inputs, validation_outputs)) / len(validation_inputs)
+    def save(self, filepath):
+        with open(filepath, 'wb') as f:
+            pickle.dump(self, f)
 
-            # Call the universal callback if provided
-            if callback:
-                callback(epoch, epochs, epoch_loss, validation_loss, costs, gradients)
+    @staticmethod
+    def load(filepath):
+        with open(filepath, 'rb') as f:
+            return pickle.load(f)

@@ -1,120 +1,89 @@
-import math
-import random
-from typing import List
+import numpy as np
+from typing import Optional, Callable
 
-from . import Neuron
+from . import Neuron, ActivationFunctions, Optimizer
 
 class Layer:
-    def __init__(self):
+    def __init__(self, num_neurons: Optional[int] = None, num_inputs: Optional[int] = None, activation_function: Optional[Callable[[np.ndarray], np.ndarray]] = None, threshold: float = 1.0):
         """Base class for all layers."""
-        pass
+        self.num_neurons = num_neurons
+        self.num_inputs = num_inputs
+        self.activation_function = activation_function
+        self.threshold = threshold
+        self.epsilon = 1e-5
+        self.signals = None  # Initialize as None, as the shape depends on the layer
+        self.inputs = None   # Initialize as None
+        self.optimizer: Optimizer = None
 
-    def activate(self, inputs: List[float], training: bool = False) -> List[float]:
-        """Activate the layer with the given inputs."""
-        raise NotImplementedError("Subclasses must implement activate method")
+    def forward(self, inputs: np.ndarray) -> np.ndarray:
+        """Forward pass through the layer."""
+        raise NotImplementedError("Subclasses must implement forward method")
 
-    def _update_weights_and_biases(self, prev_layer, learning_rate: float, beta1: float, beta2: float, epsilon: float, lambda_l1: float, lambda_l2: float, gradient_clip: float):
-        """Update weights and biases of the layer."""
-        raise NotImplementedError("Subclasses must implement _update_weights_and_biases method")
+    def backward(self, grad: np.ndarray) -> np.ndarray:
+        """Backward pass through the layer."""
+        raise NotImplementedError("Subclasses must implement backward method")
 
+    def update(self) -> None:
+        """Update the layer's parameters."""
+        raise NotImplementedError("Subclasses must implement update method")
 
-class InputLayer(Layer):
-    def __init__(self, num_neurons: int):
-        """Initialize an input layer with the given number of neurons."""
-        super().__init__()
-        self.neurons = [Neuron(0) for _ in range(num_neurons)]
-
+    def _init_optimizer(self, optimizer):
+        """Initialize the optimizer for the layer's neurons (if applicable)."""
+        if hasattr(self, 'neurons') and self.neurons:
+            self.optimizer = optimizer
+            for neuron in self.neurons:
+                self.optimizer.initialize(neuron)
+        else:
+            self.optimizer = optimizer # For layers without neurons
 
 class DenseLayer(Layer):
     def __init__(self, num_neurons: int, num_inputs: int, activation_function, dropout_rate: float = 0.0, batch_norm: bool = False, threshold: float = 1.0):
         """Initialize a dense layer with the given parameters."""
-        super().__init__()
-        self.threshold = threshold
+        super().__init__(num_neurons, num_inputs, activation_function, threshold)
         self.neurons = [Neuron(num_inputs, activation_function) for _ in range(num_neurons)]
         self.dropout_rate = dropout_rate
         self.batch_norm = batch_norm
-        self.gamma = [1.0] * num_neurons if batch_norm else None
-        self.beta = [0.0] * num_neurons if batch_norm else None
-        self.mean = [0.0] * num_neurons if batch_norm else None
-        self.variance = [1.0] * num_neurons if batch_norm else None
-        self.epsilon = 1e-5
-        self.signals = []
+        self.gamma = np.ones(num_neurons) if batch_norm else None
+        self.beta = np.zeros(num_neurons) if batch_norm else None
+        self.mean = np.zeros(num_neurons) if batch_norm else None
+        self.variance = np.ones(num_neurons) if batch_norm else None
+        self.signals = np.zeros(num_neurons)
+        self.inputs = np.zeros(num_inputs)
+        self.gradients = None
+        self.backward_delta = None
 
-    def activate(self, inputs: List[float], training: bool = False) -> List[float]:
-        """Activate the dense layer with the given inputs."""
-        self.signals = [result if (result := neuron.activate(inputs, self.threshold)) is not None else 0.0 for neuron in self.neurons]
-        
-        if training:
-            self.signals = self._dropout(self.signals)
-            if self.batch_norm:
-                self.signals = self._batch_norm(self.signals)
-                
+    def forward(self, inputs: np.ndarray) -> np.ndarray:
+        self.inputs = inputs
+
+        # Extract weights and biases for each neuron
+        weights = np.array([neuron.weights for neuron in self.neurons])  # Shape: (num_neurons, num_inputs)
+        biases = np.array([neuron.bias for neuron in self.neurons])      # Shape: (num_neurons,)
+
+        # Ensure proper shape for dot product
+        z = np.dot(weights, inputs) + biases  # Shape: (num_neurons,)
+
+        # Apply activation function and threshold
+        self.signals = self.activation_function(z) * self.threshold
         return self.signals
 
-    def _dropout(self, signals: List[float]) -> List[float]:
-        """Apply dropout to the signals."""
-        if self.dropout_rate > 0:
-            # Generate the mask in one step, then apply
-            mask = [1 if random.random() <= self.dropout_rate else 0 for _ in signals]
-            return [signal * mask_val for signal, mask_val in zip(signals, mask)]
-        return signals
 
-    def _batch_norm(self, signals: List[float]) -> List[float]:
-        """Apply batch normalization to the signals."""
-        if self.mean is None:
-            self.mean = [sum(signals) / len(signals)] * len(signals)
-            variance_sum = sum((signal - self.mean[0]) ** 2 for signal in signals)
-            self.variance = [variance_sum / len(signals)] * len(signals)
-        
-        normalized = [(signal - self.mean[0]) / math.sqrt(self.variance[0] + self.epsilon) for signal in signals]
-        
-        return [gamma * norm + beta for gamma, norm, beta in zip(self.gamma, normalized, self.beta)]
+    def backward(self, grad: np.ndarray) -> np.ndarray:
+        """Backward pass through the layer."""
 
-    def _update_weights_and_biases(self, prev_layer_neurons: List[Neuron], learning_rate: float, beta1: float, beta2: float, epsilon: float, lambda_l1: float, lambda_l2: float, gradient_clip: float):
-        for neuron in self.neurons:
-            neuron.time_step += 1
-            gradients = [neuron.error_signal * prev_neuron.signal for prev_neuron in prev_layer_neurons]
-            gradients = [max(min(grad, gradient_clip), -gradient_clip) for grad in gradients]
-            neuron.gradients = gradients
+        # Calculate derivative of the activation function for the backward pass
+        derivative = ActivationFunctions.derivative(self.activation_function, self.signals)
+        delta = grad * derivative  # Shape: (num_neurons,)
+        self.backward_delta = delta  # Store delta for bias update
 
-            for k in range(len(neuron.weights)):
-                # Update using Adam optimizer
-                neuron.first_moment[k] = beta1 * neuron.first_moment[k] + (1 - beta1) * gradients[k]
-                neuron.second_moment[k] = beta2 * neuron.second_moment[k] + (1 - beta2) * (gradients[k] ** 2)
-                
-                corrected_first = neuron.first_moment[k] / (1 - (beta1 ** neuron.time_step))
-                corrected_second = neuron.second_moment[k] / (1 - (beta2 ** neuron.time_step))
-                
-                adam_update = learning_rate * corrected_first / (math.sqrt(corrected_second) + epsilon)
-                
-                # L1 and L2 regularization
-                l1_reg = lambda_l1 * math.copysign(1, neuron.weights[k])
-                l2_reg = lambda_l2 * neuron.weights[k]
-                neuron.weights[k] -= adam_update + l1_reg + l2_reg
+        # Store gradients for weight update (weights: (num_neurons, num_inputs))
+        self.gradients = np.dot(delta[:, np.newaxis], self.inputs[np.newaxis, :])  # Shape: (num_neurons, num_inputs)
 
-            # Update bias using Adam optimizer
-            neuron.first_moment_bias = beta1 * neuron.first_moment_bias + (1 - beta1) * neuron.error_signal
-            neuron.second_moment_bias = beta2 * neuron.second_moment_bias + (1 - beta2) * (neuron.error_signal ** 2)
-            corrected_first_bias = neuron.first_moment_bias / (1 - (beta1 ** neuron.time_step))
-            corrected_second_bias = neuron.second_moment_bias / (1 - (beta2 ** neuron.time_step))
-            adam_bias_update = learning_rate * corrected_first_bias / (math.sqrt(corrected_second_bias) + epsilon)
-            
-            # L1 and L2 regularization on bias
-            l1_bias_reg = lambda_l1 * math.copysign(1, neuron.bias)
-            l2_bias_reg = lambda_l2 * neuron.bias
-            neuron.bias -= adam_bias_update + l1_bias_reg + l2_bias_reg
+        # Propagate the delta backward to the previous layer
+        return np.dot(np.array([neuron.weights for neuron in self.neurons]).T, delta)  # Shape: (num_inputs,)
 
-            # Clip error signal
-            neuron.error_signal = max(min(neuron.error_signal, gradient_clip), -gradient_clip)
-
-
-class OutputLayer(DenseLayer):
-    def __init__(self, num_neurons: int, num_inputs: int, activation_function):
-        """Initialize an output layer with the given parameters."""
-        self.neurons = [Neuron(num_inputs, activation_function) for _ in range(num_neurons)]
-
-    def activate(self, inputs: List[float], *args, **kwargs) -> List[float]:
-        """Activate the output layer with the given inputs."""
-        self.signals = [result if (result := neuron.activate(inputs, 1)) is not None else 0.0 for neuron in self.neurons]
-
-        return self.signals
+    def update(self) -> None:
+        """Update the layer's parameters."""
+        if self.optimizer:
+            for i, neuron in enumerate(self.neurons):
+                grads = (self.gradients[i], self.backward_delta[i])
+                self.optimizer.update(neuron, grads)
