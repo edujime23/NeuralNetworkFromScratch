@@ -3,7 +3,6 @@ from mpl_toolkits.mplot3d import Axes3D  # Necesario para gráficos 3D
 from utils.functions import CostFunctions, ActivationFunctions
 from utils.layers import DenseLayer
 from neuralNetwork import NeuralNetwork
-from utils.callbacks import EpochEndCallback
 import sys
 import threading
 import multiprocessing
@@ -18,7 +17,7 @@ def universal_callback(epoch, logs, shared_data):
     shared_data['costs'] = logs.get('costs', [])
 
 def train_network(nn, inputs, outputs, validation_inputs, validation_outputs, shared_data):
-    nn.fit(inputs, outputs, epochs=10000, batch_size=2, validation_data=(validation_inputs, validation_outputs), callbacks=[EpochEndCallback(lambda epoch, logs: universal_callback(epoch, logs, shared_data))])
+    nn.fit(inputs, outputs, epochs=10000, batch_size=2, validation_data=(validation_inputs, validation_outputs))
 
 if __name__ == "__main__":
     # Dataset XOR
@@ -30,10 +29,12 @@ if __name__ == "__main__":
 
     # Crear la red neuronal (2 entradas, 1 capa oculta de 4 neuronas y 1 salida)
     layers = [
-        DenseLayer(4, 2, ActivationFunctions.leaky_relu, dropout_rate=0.25, batch_norm=True),
+        DenseLayer(4, 2, ActivationFunctions.leaky_relu),
         DenseLayer(1, 4, ActivationFunctions.sigmoid)
     ]
     nn = NeuralNetwork(layers, CostFunctions.cross_entropy, threshold=1.0, gradient_clip=1.0)
+
+    nn.compile()
 
     # Configuración para salir del programa al cerrar la ventana
     def on_close(event):
