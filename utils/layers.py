@@ -1,5 +1,5 @@
 import numpy as np
-from typing import Optional, Callable, Tuple
+from typing import Optional, Callable, Tuple, Union
 from . import Neuron, ActivationFunctions, Optimizer
 
 class Layer:
@@ -11,7 +11,7 @@ class Layer:
         self.activation_function = activation_function
         self.threshold = threshold
         self.signals = self.inputs = None
-        self.optimizer = None
+        self.optimizer: Optimizer = None
 
 class Flatten(Layer):
     def forward(self, inputs: np.ndarray) -> np.ndarray:
@@ -56,9 +56,19 @@ class DenseLayer(Layer):
                     else self.backward_delta[i]
                 )
                 self.optimizer.update(neuron, 'bias', bias_update)
+                
+    def _init_optimizer(self, optimizer):
+        """
+        Initialize the optimizer for the layer
+        
+        Args:
+            optimizer: Optimizer to be used for parameter updates
+        """
+        self.optimizer = optimizer
+        for neuron in self.neurons:
+            self.optimizer.initialize(neuron, 'weights')
+            self.optimizer.initialize(neuron, 'bias')
 
-import numpy as np
-from typing import Union, Optional, Tuple, Callable
 
 class Conv2DLayer:
     def __init__(self, 
