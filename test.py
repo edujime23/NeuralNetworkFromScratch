@@ -4,39 +4,68 @@ from utils.layers import DenseLayer, Flatten, Conv2DLayer
 from neuralNetwork import NeuralNetwork
 from utils.callbacks import Callback
 import numpy as np
+import matplotlib.pyplot as plt
+from PIL import Image
+import scipy.signal
 
 class back(Callback):
     def on_epoch_end(self, epoch, logs=None):
-        if epoch % 100 == 0:print(f"Epoch {epoch+1}, Loss: {logs['loss']:.4f}, Val Loss: {logs.get('val_loss', 'N/A'):.4f}")
+        if epoch % 1 == 0: print(f"Epoch {epoch+1}, Loss: {logs['loss']:.4f}, Val Loss: {logs.get('val_loss', 'N/A'):.4f}")
 
-# XOR dataset
-inputs = np.array([[0, 0], [0, 1], [1, 0], [1, 1]])
-outputs = np.array([[0], [1], [1], [0]])
+def generate_vertical_line_image(size=16, line_col=8):
+    image = np.zeros((size, size, 1), dtype=np.float32)
+    image[:, line_col, 0] = 1.0
+    return image
 
-validation_inputs = np.array([[0, 0], [1, 1]])
-validation_outputs = np.array([[0], [0]])
+# Generate training data
+num_samples = 1000
+inputs = np.zeros((num_samples, 16, 16, 1), dtype=np.float32)
+outputs = np.zeros((num_samples, 16, 16, 1), dtype=np.float32)
 
-# Reshape inputs for Conv2D layer (batch_size, height, width, channels)
-inputs = inputs.reshape(inputs.shape[0], 2, 1, 1)
-validation_inputs = validation_inputs.reshape(validation_inputs.shape[0], 2, 1, 1)
+for i in range(num_samples):
+    line_col = np.random.randint(0, 16)
+    input_image = generate_vertical_line_image(size=16, line_col=line_col)
+    inputs[i] = input_image
+    outputs[i] = input_image # Try to learn identity
 
-# Create the neural network with a Conv2D layer
+# Generate validation data
+num_val_samples = 10
+validation_inputs = np.zeros((num_val_samples, 16, 16, 1), dtype=np.float32)
+validation_outputs = np.zeros((num_val_samples, 16, 16, 1), dtype=np.float32)
+
+for i in range(num_val_samples):
+    line_col = np.random.randint(0, 16)
+    input_image = generate_vertical_line_image(size=16, line_col=line_col)
+    validation_inputs[i] = input_image
+    validation_outputs[i] = input_image
+
+# Create a very simple convolutional network
 layers = [
-    Conv2DLayer(4, (2, 1), input_shape=(2, 1, 1), activation_function=ActivationFunctions.leaky_relu),
-    Flatten(),
-    DenseLayer(8, 4 * 1 * 1, ActivationFunctions.leaky_relu, dropout_rate=0.25, batch_norm=True), # Input size is num_filters * output_height * output_width = 4 * 1 * 1 = 4
-    DenseLayer(1, 8, ActivationFunctions.sigmoid)
+    Conv2DLayer(4, (3, 3), input_shape=(16, 16, 1), activation_function=ActivationFunctions.sigmoid, padding='same') # Increased filters to 3
 ]
-nn = NeuralNetwork(layers, CostFunctions.cross_entropy, threshold=1.0, gradient_clip=1.0)
-
-nn.compile(optimizer=AdamOptimizer(0.005))
+nn = NeuralNetwork(layers, CostFunctions.mean_squared_error, threshold=1, gradient_clip=1.0)
+nn.compile(optimizer=AdamOptimizer(1e-1)) # Reduced learning rate
 
 # Train the network
-nn.fit(inputs, outputs, epochs=2000, batch_size=4, validation_data=(validation_inputs, validation_outputs), callbacks=[back()])
+nn.fit(inputs, outputs, epochs=100, batch_size=64, validation_data=(validation_inputs, validation_outputs), callbacks=[back()]) # Increased epochs
 
 # Test the trained network
-print("Testing trained network:")
-test_inputs = np.array([[0, 0], [0, 1], [1, 0], [1, 1]]).reshape(4, 2, 1, 1)
-for input_data in test_inputs:
-    output = nn.predict([input_data])
-    print(f"Input: {input_data.flatten()}, Output: {output[0]}")
+print("\nTesting trained network:")
+test_input = generate_vertical_line_image(size=16, line_col=7).reshape(1, 16, 16, 1)
+predicted_output = nn.predict(test_input)
+
+# Visualize the results
+plt.figure(figsize=(6, 3))
+
+plt.subplot(1, 2, 1)
+plt.imshow(test_input[0, :, :, 0], cmap='gray')
+plt.title("Input (Vertical Line)")
+
+plt.subplot(1, 2, 2)
+print(f"Min predicted_output: {np.min(predicted_output)}")
+print(f"Max predicted_output: {np.max(predicted_output)}")
+plt.imshow(predicted_output[0, :, :, 0], cmap='gray')
+plt.title("Predicted Output")
+
+plt.tight_layout()
+plt.show()

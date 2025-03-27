@@ -1,52 +1,19 @@
-import itertools
 import numpy as np
 from typing import Optional, Callable, Tuple
-
 from . import Neuron, ActivationFunctions, Optimizer
 
 class Layer:
-    def __init__(self, num_neurons: Optional[int] = None, num_inputs: Optional[int] = None, activation_function: Optional[Callable[[np.ndarray], np.ndarray]] = None, threshold: float = 1.0):
-        """Base class for all layers."""
-        self.num_neurons = num_neurons
-        self.num_inputs = num_inputs
+    def __init__(self, num_neurons: Optional[int] = None, num_inputs: Optional[int] = None, 
+                 activation_function: Optional[Callable[[np.ndarray], np.ndarray]] = None, 
+                 threshold: float = 1.0):
+        """Streamlined base layer initialization."""
+        self.num_neurons, self.num_inputs = num_neurons, num_inputs
         self.activation_function = activation_function
         self.threshold = threshold
-        self.epsilon = 1e-5
-        self.signals = None  # Initialize as None, as the shape depends on the layer
-        self.inputs = None   # Initialize as None
-        self.optimizer: Optimizer = None
+        self.signals = self.inputs = None
+        self.optimizer = None
 
-    def forward(self, inputs: np.ndarray) -> np.ndarray:
-        """Forward pass through the layer."""
-        raise NotImplementedError("Subclasses must implement forward method")
-
-    def backward(self, grad: np.ndarray) -> np.ndarray:
-        """Backward pass through the layer."""
-        raise NotImplementedError("Subclasses must implement backward method")
-
-    def update(self) -> None:
-        """Update the layer's parameters."""
-        raise NotImplementedError("Subclasses must implement update method")
-
-    def _init_optimizer(self, optimizer):
-        """Initialize the optimizer for the layer's neurons (if applicable)."""
-        if hasattr(self, 'neurons') and self.neurons:
-            self.optimizer = optimizer
-            for neuron in self.neurons:
-                self.optimizer.initialize(neuron, 'weights')
-                self.optimizer.initialize(neuron, 'bias')
-        elif isinstance(self, Conv2DLayer):
-            self.optimizer = optimizer
-            self.optimizer.initialize(self, 'filters')
-            self.optimizer.initialize(self, 'biases')
-        else:
-            self.optimizer = optimizer # For layers without neurons
-            
 class Flatten(Layer):
-    def __init__(self):
-        super().__init__()
-        self.original_shape = None
-
     def forward(self, inputs: np.ndarray) -> np.ndarray:
         self.original_shape = inputs.shape
         return inputs.reshape(inputs.shape[0], -1)
@@ -55,107 +22,143 @@ class Flatten(Layer):
         return grad.reshape(self.original_shape)
 
     def update(self) -> None:
-        pass # No parameters to update
+        pass
 
 class DenseLayer(Layer):
-    def __init__(self, num_neurons: int, num_inputs: int, activation_function, dropout_rate: float = 0.0, batch_norm: bool = False, threshold: float = 1.0):
-        """Initialize a dense layer with the given parameters."""
+    def __init__(self, num_neurons: int, num_inputs: int, activation_function, threshold: float = 1.0):
         super().__init__(num_neurons, num_inputs, activation_function, threshold)
         self.neurons = [Neuron(num_inputs, activation_function) for _ in range(num_neurons)]
-        self.dropout_rate = dropout_rate
-        self.batch_norm = batch_norm
-        self.gamma = np.ones(num_neurons) if batch_norm else None
-        self.beta = np.zeros(num_neurons) if batch_norm else None
-        self.mean = np.zeros(num_neurons) if batch_norm else None
-        self.variance = np.ones(num_neurons) if batch_norm else None
         self.signals = np.zeros(num_neurons)
         self.inputs = np.zeros(num_inputs)
-        self.gradients = None
-        self.backward_delta = None
 
     def forward(self, inputs: np.ndarray) -> np.ndarray:
         self.inputs = inputs
-        batch_size = inputs.shape[0] if inputs.ndim > 1 else 1
-
-        # Extract weights and biases for each neuron
-        weights = np.array([neuron.weights for neuron in self.neurons])  # Shape: (num_neurons, num_inputs)
-        biases = np.array([neuron.bias for neuron in self.neurons])      # Shape: (num_neurons,)
-
-        # Perform batched dot product
-        # inputs shape: (batch_size, num_inputs)
-        # weights shape: (num_neurons, num_inputs)
-        # Transpose weights to (num_inputs, num_neurons) for dot product
-        z = np.dot(inputs, weights.T) + biases  # Shape: (batch_size, num_neurons)
-
-        # Apply activation function and threshold
+        weights = np.array([neuron.weights for neuron in self.neurons])
+        biases = np.array([neuron.bias for neuron in self.neurons])
+        z = np.dot(inputs, weights.T) + biases
         self.signals = self.activation_function(z) * self.threshold
         return self.signals
 
     def backward(self, grad: np.ndarray) -> np.ndarray:
-        """Backward pass through the layer."""
-        # Calculate derivative of the activation function for the backward pass
         derivative = ActivationFunctions.derivative(self.activation_function, self.signals)
-        delta = grad * derivative  # Shape: (batch_size, num_neurons)
-        self.backward_delta = delta  # Store delta for bias update
-
-        # Store gradients for weight update
-        # inputs shape: (batch_size, num_inputs)
-        # delta shape: (batch_size, num_neurons)
-        self.gradients = np.dot(self.inputs.T, delta) / self.inputs.shape[0] # Shape: (num_inputs, num_neurons), normalized by batch size
-
-        # Propagate the delta backward to the previous layer
-        weights = np.array([neuron.weights for neuron in self.neurons]) # Shape: (num_neurons, num_inputs)
-        return np.dot(delta, weights)  # Shape: (batch_size, num_inputs)
+        delta = grad * derivative
+        self.gradients = np.dot(self.inputs.T, delta) / self.inputs.shape[0]
+        weights = np.array([neuron.weights for neuron in self.neurons])
+        return np.dot(delta, weights)
 
     def update(self) -> None:
-        """Update the layer's parameters."""
         if self.optimizer:
             for i, neuron in enumerate(self.neurons):
                 self.optimizer.update(neuron, 'weights', self.gradients[:, i])
-                self.optimizer.update(neuron, 'bias', self.backward_delta[:, i].mean(axis=0) if self.backward_delta.ndim > 1 else self.backward_delta[i])
+                bias_update = delta_mean = (
+                    self.backward_delta[:, i].mean() 
+                    if self.backward_delta.ndim > 1 
+                    else self.backward_delta[i]
+                )
+                self.optimizer.update(neuron, 'bias', bias_update)
 
-class Conv2DLayer(Layer):
-    def __init__(self, num_filters: int, kernel_size: Tuple[int, int], stride: int = 1, padding: str = 'valid', activation_function=None, input_shape: Optional[Tuple[int, int, int]] = None):
-        super().__init__(activation_function=activation_function)
+import numpy as np
+from typing import Union, Optional, Tuple, Callable
+
+class Conv2DLayer:
+    def __init__(self, 
+                 num_filters: int, 
+                 kernel_size: Union[int, Tuple[int, int]], 
+                 stride: int = 1, 
+                 padding: str = 'valid', 
+                 activation_function: Optional[Callable] = None, 
+                 input_shape: Optional[Tuple[int, int, int]] = None):
+        """
+        Initialize a 2D Convolutional Layer
+        
+        Args:
+            num_filters: Number of convolutional filters/kernels
+            kernel_size: Size of the convolution window (int or tuple)
+            stride: Stride of the convolution
+            padding: Padding method ('valid' or 'same')
+            activation_function: Optional activation function to apply after convolution
+            input_shape: Optional input shape for pre-initialization
+        """
+        # Normalize kernel size to tuple if single int is provided
+        self.kernel_size = (kernel_size, kernel_size) if isinstance(kernel_size, int) else kernel_size
+        
+        # Store layer parameters
         self.num_filters = num_filters
-        self.kernel_size = kernel_size
         self.stride = stride
-        self.padding = padding
+        self.padding = padding.lower()
+        self.activation_function = activation_function
+        
+        # Placeholder for input and layer parameters
+        self.inputs = None
+        self.signals = None
         self.input_shape = input_shape
-        self.filters = np.random.randn(num_filters, kernel_size[0], kernel_size[1], input_shape[2] if input_shape else 1) * np.sqrt(2.0 / (kernel_size[0] * kernel_size[1] * (input_shape[2] if input_shape else 1)))
-        self.biases = np.zeros(num_filters)
-        self.d_filters = np.zeros_like(self.filters)
-        self.d_biases = np.zeros_like(self.biases)
+        self.optimizer = None
+        
+        # Initialization of filters and biases
+        if input_shape:
+            input_channels = input_shape[2]
+            # He initialization for better gradient flow
+            scale = np.sqrt(2.0 / (np.prod(self.kernel_size) * input_channels))
+            self.filters = np.random.randn(num_filters, *self.kernel_size, input_channels) * scale
+            self.biases = np.zeros(num_filters)
+        else:
+            self.filters = None
+            self.biases = None
+        
+        # Pre-allocate gradient arrays
+        self.d_filters = None
+        self.d_biases = None
 
     def forward(self, inputs: np.ndarray) -> np.ndarray:
-        # Assuming inputs is a single image with shape (height, width, channels) or a batch of images (batch_size, height, width, channels)
+        """
+        Perform forward convolution
+        
+        Args:
+            inputs: Input feature map
+        
+        Returns:
+            Convolved and activated feature map
+        """
+        # Lazy initialization of filters if not done during __init__
+        if self.filters is None:
+            input_channels = inputs.shape[-1]
+            scale = np.sqrt(2.0 / (np.prod(self.kernel_size) * input_channels))
+            self.filters = np.random.randn(self.num_filters, *self.kernel_size, input_channels) * scale
+            self.biases = np.zeros(self.num_filters)
+        
         self.inputs = inputs
-        if inputs.ndim == 3:
-            inputs = np.expand_dims(inputs, axis=0) # Add batch dimension
-
         batch_size, input_height, input_width, input_channels = inputs.shape
         kernel_height, kernel_width = self.kernel_size
+        stride_h, stride_w = self.stride, self.stride
 
+        # Apply padding
         if self.padding == 'same':
-            pad_height = int(((input_height - 1) * self.stride + kernel_height - input_height) / 2)
-            pad_width = int(((input_width - 1) * self.stride + kernel_width - input_width) / 2)
-            padded_inputs = np.pad(inputs, ((0, 0), (pad_height, pad_height), (pad_width, pad_width), (0, 0)), mode='constant')
+            pad_h = int(((input_height - 1) * stride_h + kernel_height - input_height) / 2)
+            pad_w = int(((input_width - 1) * stride_w + kernel_width - input_width) / 2)
+            padded_inputs = np.pad(inputs, ((0, 0), (pad_h, pad_h), (pad_w, pad_w), (0, 0)), mode='constant')
         else:
             padded_inputs = inputs
 
-        input_height_padded = padded_inputs.shape[1]
-        input_width_padded = padded_inputs.shape[2]
+        # Compute output dimensions
+        output_height = (padded_inputs.shape[1] - kernel_height) // stride_h + 1
+        output_width = (padded_inputs.shape[2] - kernel_width) // stride_w + 1
 
-        output_height = int((input_height_padded - kernel_height) / self.stride + 1)
-        output_width = int((input_width_padded - kernel_width) / self.stride + 1)
-        output = np.zeros((batch_size, output_height, output_width, self.num_filters))
+        # Use numpy's stride tricks for efficient convolution
+        shape = (batch_size, output_height, output_width, kernel_height, kernel_width, input_channels)
+        strides = (
+            padded_inputs.strides[0], 
+            stride_h * padded_inputs.strides[1], 
+            stride_w * padded_inputs.strides[2],
+            padded_inputs.strides[1], 
+            padded_inputs.strides[2], 
+            padded_inputs.strides[3]
+        )
+        patches = np.lib.stride_tricks.as_strided(padded_inputs, shape=shape, strides=strides)
 
-        for b, f, h, w in itertools.product(range(batch_size), range(self.num_filters), range(output_height), range(output_width)):
-            input_slice = padded_inputs[b,
-                                        h * self.stride:h * self.stride + kernel_height,
-                                        w * self.stride:w * self.stride + kernel_width, :]
-            output[b, h, w, f] = np.sum(input_slice * self.filters[f]) + self.biases[f]
+        # Perform convolution using einsum for efficiency
+        output = np.einsum('bhwkyc,fkyc->bhwf', patches, self.filters) + self.biases.reshape(1, 1, 1, -1)
 
+        # Apply activation function if specified
         if self.activation_function:
             self.signals = self.activation_function(output)
             return self.signals
@@ -164,51 +167,96 @@ class Conv2DLayer(Layer):
             return output
 
     def backward(self, grad: np.ndarray) -> np.ndarray:
-        # grad shape: (batch_size, output_height, output_width, num_filters)
+        """
+        Compute gradients for backpropagation
+        
+        Args:
+            grad: Gradient from the subsequent layer
+        
+        Returns:
+            Gradient with respect to input
+        """
         inputs = self.inputs
-        if inputs.ndim == 3:
-            inputs = np.expand_dims(inputs, axis=0)
-
         batch_size, input_height, input_width, input_channels = inputs.shape
-        num_filters, kernel_height, kernel_width, _ = self.filters.shape
+        num_filters, kernel_height, kernel_width, num_input_channels_filters = self.filters.shape
         _, output_height, output_width, _ = grad.shape
+        stride_h, stride_w = self.stride, self.stride
 
-        d_filters = np.zeros_like(self.filters)
-        d_biases = np.zeros_like(self.biases)
-        d_input = np.zeros_like(inputs, dtype=np.float64)
+        # Apply padding similar to forward pass
+        if self.padding == 'same':
+            pad_h = int(((input_height - 1) * stride_h + kernel_height - input_height) / 2)
+            pad_w = int(((input_width - 1) * stride_w + kernel_width - input_width) / 2)
+            padded_inputs = np.pad(inputs, ((0, 0), (pad_h, pad_h), (pad_w, pad_w), (0, 0)), mode='constant')
+        else:
+            padded_inputs = inputs
 
-        for b, f in itertools.product(range(batch_size), range(num_filters)):
-            # Gradient with respect to biases
-            d_biases[f] += np.sum(grad[b, :, :, f])
+        # Apply activation derivative if activation function exists
+        if self.activation_function:
+            derivative = ActivationFunctions.derivative(self.activation_function, self.signals)
+            grad = grad * derivative
 
-            for h, w in itertools.product(range(output_height), range(output_width)):
-                # Gradient with respect to filters
-                input_slice = inputs[b,
-                                    h * self.stride:h * self.stride + kernel_height,
-                                    w * self.stride:w * self.stride + kernel_width, :]
-                d_filters[f] += input_slice * grad[b, h, w, f]
+        # Compute gradient for filters
+        shape_patches = (batch_size, output_height, output_width, kernel_height, kernel_width, input_channels)
+        strides_patches = (
+            padded_inputs.strides[0], 
+            stride_h * padded_inputs.strides[1], 
+            stride_w * padded_inputs.strides[2],
+            padded_inputs.strides[1], 
+            padded_inputs.strides[2], 
+            padded_inputs.strides[3]
+        )
+        input_patches = np.lib.stride_tricks.as_strided(padded_inputs, shape=shape_patches, strides=strides_patches)
 
-                # Gradient with respect to input (for backpropagation to previous layer)
-                for c in range(input_channels):
-                    d_input[b,
-                            h * self.stride:h * self.stride + kernel_height,
-                            w * self.stride:w * self.stride + kernel_width, c] += grad[b, h, w, f] * self.filters[f, :, :, c]
+        self.d_filters = np.einsum('bhwkyc,bhwf->fkyc', input_patches, grad) / inputs.shape[0]
 
-        self.d_filters = d_filters / batch_size
-        self.d_biases = d_biases / batch_size
+        # Compute gradient for input
+        flipped_filters = np.flip(self.filters, axis=(1, 2))
+        padded_grad = np.pad(grad, ((0, 0), (kernel_height - 1, kernel_height - 1), (kernel_width - 1, kernel_width - 1), (0, 0)), mode='constant')
 
-        # Remove the added batch dimension if the original input was 3D
+        shape_grad_patches = (batch_size, input_height, input_width, kernel_height, kernel_width, num_filters)
+        strides_grad_patches = (
+            padded_grad.strides[0], 
+            stride_h * padded_grad.strides[1], 
+            stride_w * padded_grad.strides[2],
+            padded_grad.strides[1], 
+            padded_grad.strides[2], 
+            padded_grad.strides[3]
+        )
+        grad_patches = np.lib.stride_tricks.as_strided(padded_grad, shape=shape_grad_patches, strides=strides_grad_patches)
+
+        d_input_padded = np.einsum('bhwkyf,fkyc->bhwc', grad_patches, flipped_filters)
+
+        # Handle padding for input gradient
+        if self.padding == 'same' and (kernel_height > 1 or kernel_width > 1):
+            d_input = d_input_padded[:, pad_h:-pad_h, pad_w:-pad_w, :]
+        elif self.padding == 'valid':
+            d_input = d_input_padded
+
+        # Compute biases gradient
+        self.d_filters /= batch_size
+        self.d_biases = np.mean(grad, axis=(0, 1, 2))
+
+        # Handle different input dimensions
         if self.inputs.ndim == 3:
             d_input = np.squeeze(d_input, axis=0)
 
         return d_input
 
     def update(self) -> None:
+        """
+        Update layer parameters using the optimizer
+        """
         if self.optimizer:
             self.optimizer.update(self, 'filters', self.d_filters)
             self.optimizer.update(self, 'biases', self.d_biases)
 
     def _init_optimizer(self, optimizer):
+        """
+        Initialize the optimizer for the layer
+        
+        Args:
+            optimizer: Optimizer to be used for parameter updates
+        """
         self.optimizer = optimizer
         self.optimizer.initialize(self, 'filters')
         self.optimizer.initialize(self, 'biases')
