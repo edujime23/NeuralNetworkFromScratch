@@ -1,39 +1,28 @@
 import numpy as np
 from typing import Callable
 
+import numpy as np
+
 class CostFunctions:
     @staticmethod
-    def mean_squared_error(predicted: np.ndarray, actual: np.ndarray) -> float:
-        return np.mean((predicted - actual) ** 2)
+    def mean_squared_error(predicted: np.ndarray, target: np.ndarray) -> np.ndarray:
+        return (predicted - target) ** 2
 
     @staticmethod
-    def cross_entropy(predicted: np.ndarray, actual: np.ndarray) -> float:
-        epsilon = 1e-7
-        return -np.mean(actual * np.log(predicted + epsilon) + (1 - actual) * np.log(1 - predicted + epsilon))
+    def mean_squared_error_derivative(predicted: np.ndarray, target: np.ndarray) -> np.ndarray:
+        return 2 * (predicted - target)
 
     @staticmethod
-    def binary_cross_entropy(predicted: np.ndarray, actual: np.ndarray) -> float:
-        return CostFunctions.cross_entropy(predicted, actual)
+    def binary_cross_entropy(predicted: np.ndarray, target: np.ndarray) -> np.ndarray:
+        epsilon = 1e-15  # To avoid division by zero
+        predicted = np.clip(predicted, epsilon, 1 - epsilon)
+        return -(target * np.log(predicted) + (1 - target) * np.log(1 - predicted))
 
-class Loss:
-    def __init__(self, loss_function: Callable):
-        self.loss_function = loss_function
-
-    def __call__(self, predicted: np.ndarray, actual: np.ndarray) -> float:
-        return self.loss_function(predicted, actual)
-
-    def backward(self, predicted: np.ndarray, actual: np.ndarray) -> np.ndarray:
-        epsilon = 1e-7
-        if self.loss_function == CostFunctions.mean_squared_error:
-            return 2 * (predicted - actual) / predicted.size
-        elif self.loss_function in (CostFunctions.cross_entropy, CostFunctions.binary_cross_entropy):
-            return -(actual / (predicted + epsilon)) + ((1 - actual) / (1 - predicted + epsilon))
-        raise NotImplementedError("Backward method not implemented for this loss function")
-
-class Metrics:
     @staticmethod
-    def accuracy(predicted: np.ndarray, actual: np.ndarray) -> float:
-        return np.mean(np.round(predicted) == actual)
+    def binary_cross_entropy_derivative(predicted: np.ndarray, target: np.ndarray) -> np.ndarray:
+        epsilon = 1e-15
+        predicted = np.clip(predicted, epsilon, 1 - epsilon)
+        return - (target / predicted - (1 - target) / (1 - predicted))
 
 class ActivationFunctions:
     @staticmethod
@@ -58,5 +47,5 @@ class ActivationFunctions:
         return e_x / np.sum(e_x, axis=-1, keepdims=True)
 
     @staticmethod
-    def derivative(func: Callable[[np.ndarray], np.ndarray], x: np.ndarray, dx: float = 1e-6) -> np.ndarray:
-        return (func(x + dx) - func(x)) / dx
+    def derivative(func: Callable[[np.ndarray], np.ndarray], *args, dx: float = 1e-6) -> np.ndarray:
+        return (func(*[arg + dx for arg in args]) - func(*args)) / dx
