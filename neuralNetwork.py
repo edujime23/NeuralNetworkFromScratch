@@ -24,6 +24,7 @@ class NeuralNetwork:
             self.optimizer = optimizer
         for layer in self.layers:
             layer._init_optimizer(self.optimizer)
+            layer.threshold = self.threshold
         if loss:
             self.loss = Loss(loss)
         if metrics:
@@ -35,11 +36,12 @@ class NeuralNetwork:
                 if isinstance(callback, Callback) and hasattr(callback, method_name) and callable(getattr(callback, method_name)):
                     getattr(callback, method_name)(*args, **kwargs)
 
-    def fit(self, x: np.ndarray, y: np.ndarray, epochs: int = 1, batch_size: int = 32, validation_data: Optional[Tuple[np.ndarray, np.ndarray]] = None, callbacks: Optional[List[Callback]] = None):
+    def fit(self, x: np.ndarray, y: np.ndarray, epochs: int = 1, batch_size: int = 32, validation_data: Optional[Tuple[np.ndarray, np.ndarray]] = None, callbacks: Optional[List[Callback]] = None, early_stopping_patience: int = 1, tolerance: float = 1e-4):
         x, y = np.array(x), np.array(y)
         if validation_data:
             validation_data = (np.array(validation_data[0]), np.array(validation_data[1]))
         self.callbacks = callbacks or [] # Store callbacks in the instance
+        consecutive_below_tolerance = 0
 
         self._trigger_callbacks(self.callbacks, 'on_train_begin')
 
@@ -49,10 +51,18 @@ class NeuralNetwork:
             logs = self._get_logs(x, y, validation_data)
             self._trigger_callbacks(self.callbacks, 'on_epoch_end', epoch, logs=logs)
 
+            if validation_data and 'val_loss' in logs and 'loss' in logs:
+                if logs['val_loss'] < tolerance and logs['loss'] < tolerance:
+                    consecutive_below_tolerance += 1
+                else:
+                    consecutive_below_tolerance = 0
+
+                if consecutive_below_tolerance >= early_stopping_patience:
+                    break
+
         self._trigger_callbacks(self.callbacks, 'on_train_end')
 
     def _train_on_batch(self, x: np.ndarray, y: np.ndarray, batch_size: int, callbacks: Optional[List[Callback]]):
-        num_batches = len(x) // batch_size + (1 if len(x) % batch_size != 0 else 0)
         for i in range(0, len(x), batch_size):
             batch_x = x[i:i + batch_size]
             batch_y = y[i:i + batch_size]
@@ -73,22 +83,28 @@ class NeuralNetwork:
         self._trigger_callbacks(self.callbacks, 'on_batch_end_step')
 
     def _forward_pass(self, inputs: np.ndarray) -> np.ndarray:
-        res = inputs
-        self._trigger_callbacks(self.callbacks, 'on_forward_pass_begin', inputs=res) # Corrected argument name
+        inputs = inputs.copy()
+        self._trigger_callbacks(self.callbacks, 'on_forward_pass_begin', inputs=inputs)
         for layer in self.layers:
-            self._trigger_callbacks(self.callbacks, 'on_forward_layer_begin', layer=layer, input_data=res)
-            res = layer.forward(res)
-            self._trigger_callbacks(self.callbacks, 'on_forward_layer_end', layer=layer, output_data=res)
-        self._trigger_callbacks(self.callbacks, 'on_forward_pass_end', output=res)
-        return res
+            self._trigger_callbacks(self.callbacks, 'on_forward_layer_begin', layer=layer, input_data=inputs)
+            inputs = layer.forward(inputs)
+            self._trigger_callbacks(self.callbacks, 'on_forward_layer_end', layer=layer, output_data=inputs)
+        self._trigger_callbacks(self.callbacks, 'on_forward_pass_end', output=inputs)
+        return inputs
 
     def _backward_pass(self, targets: np.ndarray):
-        grad = ActivationFunctions.derivative(self.loss, self.layers[-1].signals, targets)
+        grad = ActivationFunctions.derivative(self.loss, 0, self.layers[-1].signals, targets)
+
+        if self.gradient_clip is not None:
+            grad = np.clip(grad, -self.gradient_clip, self.gradient_clip) # Clip loss gradient
+
         self._trigger_callbacks(self.callbacks, 'on_backward_pass_begin', targets=targets, output_gradient=grad)
         self._trigger_callbacks(self.callbacks, 'on_backward_output_gradient', gradient=grad)
         for layer in reversed(self.layers):
             self._trigger_callbacks(self.callbacks, 'on_backward_layer_begin', layer=layer, input_gradient=grad)
             grad = layer.backward(grad)
+            if self.gradient_clip is not None:
+                grad = np.clip(grad, -self.gradient_clip, self.gradient_clip) # Keep the layer-wise clipping
             self._trigger_callbacks(self.callbacks, 'on_backward_layer_end', layer=layer, output_gradient=grad)
 
     def _get_logs(self, x: np.ndarray, y: np.ndarray, validation_data: Optional[Tuple[np.ndarray, np.ndarray]]) -> dict:
@@ -96,11 +112,6 @@ class NeuralNetwork:
         if validation_data:
             val_x, val_y = validation_data
             logs['val_loss'] = np.mean(self.loss(self.predict(val_x), val_y))
-        for metric in self.metrics:
-            metric_fn = getattr(Metrics, metric)
-            logs[metric] = metric_fn(self.predict(x), y)
-            if validation_data:
-                logs[f'val_{metric}'] = metric_fn(self.predict(val_x), val_y)
         return logs
 
     def _trigger_callbacks(self, callbacks: Optional[List[Callback]], method_name: str, *args, **kwargs):

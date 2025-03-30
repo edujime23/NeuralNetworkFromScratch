@@ -1,5 +1,5 @@
 from utils.functions import CostFunctions, ActivationFunctions
-from utils.optimizer import AdamOptimizer
+from utils.optimizer import *
 from utils.layers import DenseLayer, Flatten, Conv2DLayer
 from neuralNetwork import NeuralNetwork
 from utils.callbacks import Callback
@@ -44,6 +44,11 @@ np.random.shuffle(indices)
 inputs = inputs[indices]
 outputs = outputs[indices]
 
+if np.isnan(inputs).any():
+    print("NaN detected in the original input data!")
+    print(inputs[np.isnan(inputs)])
+    # You might want to print more context about where this input came from
+
 # Generate validation data
 num_val_samples = 200
 validation_inputs = np.zeros((num_val_samples, 16, 16, 1), dtype=np.float32)
@@ -61,22 +66,20 @@ for i in range(num_val_samples // 2, num_val_samples):
 
 # Create a simple convolutional network for binary classification
 layers = [
-    Conv2DLayer(8, (3, 3), input_shape=(16, 16, 1), activation_function=ActivationFunctions.leaky_relu, padding='same'),
-    Conv2DLayer(16, (3, 3), activation_function=ActivationFunctions.leaky_relu, padding='same'),
+    Conv2DLayer(4, (3, 3), input_shape=(16, 16, 1), activation_function=ActivationFunctions.leaky_relu, padding='same'),
+    Conv2DLayer(4, (3, 3), activation_function=ActivationFunctions.leaky_relu, padding='same'),
     Flatten(),
-    DenseLayer(32, num_inputs=16 * 16 * 16, activation_function=ActivationFunctions.leaky_relu),
-    DenseLayer(1, num_inputs=32, activation_function=ActivationFunctions.sigmoid)
+    DenseLayer(8, num_inputs=4 * 16 * 16, activation_function=ActivationFunctions.leaky_relu),
+    DenseLayer(1, num_inputs=8, activation_function=ActivationFunctions.sigmoid)
 ]
-nn = NeuralNetwork(layers, CostFunctions.binary_cross_entropy, threshold=0.5, gradient_clip=1)
-nn.compile(optimizer=AdamOptimizer(learning_rate=0.0001))
+nn = NeuralNetwork(layers, CostFunctions.mean_squared_error)
+nn.compile(optimizer=AdamOptimizer(learning_rate=1e-2))
+
+# Add the print statement for the input range
+print("Range of input values:", np.min(inputs), np.max(inputs))
 
 # Train the network
-nn.fit(inputs, outputs, epochs=25, batch_size=4, validation_data=(validation_inputs, validation_outputs), callbacks=[back()])
-
-# Print initial weights and biases of the last layer
-last_layer = nn.layers[-1]
-print("\nInitial Weights of the Last Layer (first neuron):", last_layer.neurons[0].weights)
-print("Initial Bias of the Last Layer (first neuron):", last_layer.neurons[0].bias)
+nn.fit(inputs, outputs, epochs=10, batch_size=16, validation_data=(validation_inputs, validation_outputs), callbacks=[back()])
 
 # Print initial predictions on a few training samples
 print("Initial Predictions (untrained network):")
@@ -111,3 +114,5 @@ plt.title(f"Input: Vertical\nPredicted: {prediction_ver}")
 
 plt.tight_layout()
 plt.show()
+
+# no nan issues

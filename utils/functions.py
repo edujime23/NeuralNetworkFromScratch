@@ -1,28 +1,16 @@
 import numpy as np
 from typing import Callable
 
-import numpy as np
-
 class CostFunctions:
     @staticmethod
     def mean_squared_error(predicted: np.ndarray, target: np.ndarray) -> np.ndarray:
         return (predicted - target) ** 2
 
     @staticmethod
-    def mean_squared_error_derivative(predicted: np.ndarray, target: np.ndarray) -> np.ndarray:
-        return 2 * (predicted - target)
-
-    @staticmethod
     def binary_cross_entropy(predicted: np.ndarray, target: np.ndarray) -> np.ndarray:
         epsilon = 1e-15  # To avoid division by zero
-        predicted = np.clip(predicted, epsilon, 1 - epsilon)
+        predicted = predicted + epsilon
         return -(target * np.log(predicted) + (1 - target) * np.log(1 - predicted))
-
-    @staticmethod
-    def binary_cross_entropy_derivative(predicted: np.ndarray, target: np.ndarray) -> np.ndarray:
-        epsilon = 1e-15
-        predicted = np.clip(predicted, epsilon, 1 - epsilon)
-        return - (target / predicted - (1 - target) / (1 - predicted))
 
 class ActivationFunctions:
     @staticmethod
@@ -47,5 +35,9 @@ class ActivationFunctions:
         return e_x / np.sum(e_x, axis=-1, keepdims=True)
 
     @staticmethod
-    def derivative(func: Callable[[np.ndarray], np.ndarray], *args, dx: float = 1e-6) -> np.ndarray:
-        return (func(*[arg + dx for arg in args]) - func(*args)) / dx
+    def derivative(func: Callable, arg_index: int, *args, dx: float = np.float64(1) / np.uint64(2**32)) -> np.ndarray:
+        args_list = list(args)
+        original_arg = args_list[arg_index].copy()
+        perturbed_arg = original_arg + dx
+        args_list[arg_index] = perturbed_arg
+        return (func(*args_list) - func(*args)) / dx

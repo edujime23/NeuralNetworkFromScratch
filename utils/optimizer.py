@@ -1,17 +1,16 @@
 import numpy as np
-from typing import Optional, Callable, Tuple, Union, Dict, List
+from typing import Tuple, Dict, List
 
 class Optimizer:
-    def __init__(self, learning_rate=0.001):
+    def __init__(self, learning_rate=0.001, gradient_clip=1):
         self.learning_rate = self._resolve_learning_rate(learning_rate)
         self.t = 0
         self.param_states: Dict[int, Dict[str, np.ndarray]] = {}
+        self.gradient_clip = gradient_clip
 
     def _resolve_learning_rate(self, learning_rate):
         return learning_rate() if callable(learning_rate) else learning_rate
 
-    def get_learning_rate(self):
-        return self.learning_rate
 
     def register_parameter(self, param: np.ndarray, name: str):
         """Registers a parameter with the optimizer."""
@@ -27,7 +26,7 @@ class Optimizer:
     def update(self, params_and_grads: List[Tuple[np.ndarray, np.ndarray]]):
         """Updates the parameters based on their gradients."""
         self.t += 1
-        lr = self.get_learning_rate()
+        lr = self.learning_rate
         for param, grad in params_and_grads:
             self._update_single_param(param, grad, lr)
 
@@ -36,7 +35,7 @@ class Optimizer:
         raise NotImplementedError("Subclasses must implement _update_single_param")
 
 class AdamOptimizer(Optimizer):
-    def __init__(self, learning_rate=0.001, beta1=0.9, beta2=0.999, epsilon=1e-8, weight_decay=0.0):
+    def __init__(self, learning_rate=0.001, beta1=0.9, beta2=0.999, epsilon=1e-3, weight_decay=0.0):
         super().__init__(learning_rate)
         self.beta1, self.beta2 = beta1, beta2
         self.epsilon = epsilon
@@ -52,8 +51,12 @@ class AdamOptimizer(Optimizer):
         state = self.param_states[param_id]
         m = state['m']
         v = state['v']
+        
+        
+        if self.gradient_clip is not None:
+            grad = np.clip(grad, -self.gradient_clip, self.gradient_clip)
 
-        grad = grad + self.weight_decay * param if self.weight_decay > 0 else grad
+        grad = grad + self.weight_decay * param if self.weight_decay != 0 else grad
 
         m_new = self.beta1 * m + (1 - self.beta1) * grad
         v_new = self.beta2 * v + (1 - self.beta2) * (grad ** 2)
@@ -86,5 +89,4 @@ class SGD(Optimizer):
             param += self.momentum * new_velocity - lr * grad
         else:
             param += new_velocity
-
         state['velocity'] = new_velocity
