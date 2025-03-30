@@ -94,31 +94,6 @@ class Flatten(Layer):
         """Returns an empty list as the Flatten layer has no trainable parameters."""
         return []
 
-class Layer:
-    def __init__(self, num_neurons, num_inputs, activation_function=None, threshold=1.0):
-        self.num_neurons = num_neurons
-        self.num_inputs = num_inputs
-        self.activation_function = activation_function
-        self.threshold = threshold
-        self.optimizer = None
-
-    def forward(self, inputs):
-        raise NotImplementedError
-
-    def backward(self, grad):
-        raise NotImplementedError
-
-    def update(self):
-        if self.optimizer:
-            params_and_grads = self._get_params_and_grads()
-            self.optimizer.update(params_and_grads)
-
-    def _init_optimizer(self, optimizer):
-        self.optimizer = optimizer
-
-    def _get_params_and_grads(self) -> List[Tuple[np.ndarray, np.ndarray]]:
-        return []
-
 class DenseLayer(Layer):
     """
     Optimized fully connected (dense) layer using NumPy.
@@ -176,7 +151,7 @@ class DenseLayer(Layer):
             np.ndarray: The gradient passed to the previous layer.
         """
         # Assuming you have an ActivationFunctions class with a derivative method
-        derivative = ActivationFunctions.derivative(self.activation_function, 0, self.signals)
+        derivative = derivative(self.activation_function, 0, self.signals)
         # Calculate the delta for this layer
         delta = grad * derivative
         # Calculate the gradients of the weights
@@ -211,9 +186,62 @@ class DenseLayer(Layer):
             ])
         return params_and_grads
 
+class Conv1DLayer(Layer):
+    """
+    Performs 1D convolution, useful for sequence data like text, audio, or time series.
+    """
+    def __init__(self, num_filters: int, kernel_size: int, stride: int = 1, padding: str = 'valid', activation_function: Optional[Callable] = None, input_shape: Optional[Tuple[int, int, int]] = None):
+        super().__init__(num_neurons=None, num_inputs=None, activation_function=activation_function)
+        self.num_filters = num_filters
+        self.kernel_size = kernel_size
+        self.stride = stride
+        self.padding = padding.lower()
+        if self.padding not in ['valid', 'same']:
+            raise ValueError(f"Invalid padding type: '{padding}'. Must be 'valid' or 'same'.")
+        self.input_shape = input_shape
+        self.filters = None
+        self.biases = None
+        self.d_filters = None
+        self.d_biases = None
+
+    def _initialize_filters_biases(self, input_shape):
+        if self.filters is None:
+            input_channels = input_shape[-1]
+            scale = np.sqrt(2.0 / (self.kernel_size * input_channels))
+            self.filters = np.random.randn(self.num_filters, self.kernel_size, input_channels) * scale
+            self.biases = np.zeros(self.num_filters)
+            if self.optimizer:
+                self.optimizer.register_parameter(self.filters, 'filters')
+                self.optimizer.register_parameter(self.biases, 'biases')
+
+    def forward(self, inputs: np.ndarray) -> np.ndarray:
+        self._initialize_filters_biases(inputs.shape)
+        # Placeholder for 1D convolution implementation
+        raise NotImplementedError("Conv1DLayer forward pass not yet implemented.")
+
+    def backward(self, grad: np.ndarray) -> np.ndarray:
+        # Placeholder for Conv1D backward pass implementation
+        raise NotImplementedError("Conv1DLayer backward pass not yet implemented.")
+
+    def _init_optimizer(self, optimizer):
+        super()._init_optimizer(optimizer)
+        if self.filters is not None and self.biases is not None and self.optimizer is not None:
+            self.optimizer.register_parameter(self.filters, 'filters')
+            self.optimizer.register_parameter(self.biases, 'biases')
+
+    def _get_params_and_grads(self) -> List[Tuple[np.ndarray, np.ndarray]]:
+        params_and_grads = []
+        if self.d_filters is not None and self.d_biases is not None and self.filters is not None and self.biases is not None:
+            params_and_grads.extend([
+                (self.filters, self.d_filters),
+                (self.biases, self.d_biases)
+            ])
+        return params_and_grads
+
 class Conv2DLayer(Layer):
     """
-    2D Convolutional Layer (Optimized with im2col and NumPy).
+    Performs 2D convolution, the fundamental building block for processing image data.
+    It learns spatial hierarchies of features.
     """
     def __init__(self,
                  num_filters: int,
@@ -325,7 +353,7 @@ class Conv2DLayer(Layer):
 
         # Apply activation derivative if activation function exists
         if self.activation_function:
-            derivative = ActivationFunctions.derivative(self.activation_function, 0, self.signals)
+            derivative = derivative(self.activation_function, 0, self.signals)
             grad = grad * derivative
 
         # im2col of the input
@@ -389,6 +417,213 @@ class Conv2DLayer(Layer):
             return d_input_padded[:, pad_h:-pad_h, pad_w:-pad_w, :]
         else:
             return d_input_padded
+
+    def _init_optimizer(self, optimizer):
+        super()._init_optimizer(optimizer)
+        if self.filters is not None and self.biases is not None and self.optimizer is not None:
+            self.optimizer.register_parameter(self.filters, 'filters')
+            self.optimizer.register_parameter(self.biases, 'biases')
+
+    def _get_params_and_grads(self) -> List[Tuple[np.ndarray, np.ndarray]]:
+        params_and_grads = []
+        if self.d_filters is not None and self.d_biases is not None and self.filters is not None and self.biases is not None:
+            params_and_grads.extend([
+                (self.filters, self.d_filters),
+                (self.biases, self.d_biases)
+            ])
+        return params_and_grads
+
+class Conv3DLayer(Layer):
+    """
+    Performs 3D convolution, used for processing volumetric data like 3D medical scans or video.
+    """
+    def __init__(self, num_filters: int, kernel_size: Union[int, Tuple[int, int, int]], stride: int = 1, padding: str = 'valid', activation_function: Optional[Callable] = None, input_shape: Optional[Tuple[int, int, int, int, int]] = None):
+        super().__init__(num_neurons=None, num_inputs=None, activation_function=activation_function)
+        self.num_filters = num_filters
+        self.kernel_size = (kernel_size, kernel_size, kernel_size) if isinstance(kernel_size, int) else kernel_size
+        self.stride = stride
+        self.padding = padding.lower()
+        if self.padding not in ['valid', 'same']:
+            raise ValueError(f"Invalid padding type: '{padding}'. Must be 'valid' or 'same'.")
+        self.input_shape = input_shape
+        self.filters = None
+        self.biases = None
+        self.d_filters = None
+        self.d_biases = None
+
+    def _initialize_filters_biases(self, input_shape):
+        if self.filters is None:
+            input_channels = input_shape[-1]
+            scale = np.sqrt(2.0 / (np.prod(self.kernel_size) * input_channels))
+            self.filters = np.random.randn(self.num_filters, *self.kernel_size, input_channels) * scale
+            self.biases = np.zeros(self.num_filters)
+            if self.optimizer:
+                self.optimizer.register_parameter(self.filters, 'filters')
+                self.optimizer.register_parameter(self.biases, 'biases')
+
+    def forward(self, inputs: np.ndarray) -> np.ndarray:
+        self._initialize_filters_biases(inputs.shape)
+        raise NotImplementedError("Conv3DLayer forward pass not yet implemented.")
+
+    def backward(self, grad: np.ndarray) -> np.ndarray:
+        raise NotImplementedError("Conv3DLayer backward pass not yet implemented.")
+
+    def _init_optimizer(self, optimizer):
+        super()._init_optimizer(optimizer)
+        if self.filters is not None and self.biases is not None and self.optimizer is not None:
+            self.optimizer.register_parameter(self.filters, 'filters')
+            self.optimizer.register_parameter(self.biases, 'biases')
+
+    def _get_params_and_grads(self) -> List[Tuple[np.ndarray, np.ndarray]]:
+        params_and_grads = []
+        if self.d_filters is not None and self.d_biases is not None and self.filters is not None and self.biases is not None:
+            params_and_grads.extend([
+                (self.filters, self.d_filters),
+                (self.biases, self.d_biases)
+            ])
+        return params_and_grads
+
+class SeparableConv2DLayer(Layer):
+    """
+    Performs a depthwise separable convolution, which can be more efficient than standard Conv2D layers
+    with a similar number of parameters.
+    """
+    def __init__(self, num_filters: int, kernel_size: Union[int, Tuple[int, int]], stride: int = 1, padding: str = 'valid', activation_function: Optional[Callable] = None, input_shape: Optional[Tuple[int, int, int]] = None):
+        super().__init__(num_neurons=None, num_inputs=None, activation_function=activation_function)
+        self.num_filters = num_filters
+        self.kernel_size = (kernel_size, kernel_size) if isinstance(kernel_size, int) else kernel_size
+        self.stride = stride
+        self.padding = padding.lower()
+        if self.padding not in ['valid', 'same']:
+            raise ValueError(f"Invalid padding type: '{padding}'. Must be 'valid' or 'same'.")
+        self.input_shape = input_shape
+        self.depthwise_filters = None
+        self.pointwise_filters = None
+        self.biases = None
+        self.d_depthwise_filters = None
+        self.d_pointwise_filters = None
+        self.d_biases = None
+
+    def _initialize_filters_biases(self, input_shape):
+        if self.depthwise_filters is None:
+            input_channels = input_shape[-1]
+            scale_depthwise = np.sqrt(2.0 / (np.prod(self.kernel_size) * 1)) # 1 because each input channel is processed independently
+            self.depthwise_filters = np.random.randn(input_channels, *self.kernel_size, 1) * scale_depthwise
+            scale_pointwise = np.sqrt(2.0 / (input_channels * 1 * 1)) # 1x1 convolution
+            self.pointwise_filters = np.random.randn(self.num_filters, 1, 1, input_channels) * scale_pointwise
+            self.biases = np.zeros(self.num_filters)
+            if self.optimizer:
+                self.optimizer.register_parameter(self.depthwise_filters, 'depthwise_filters')
+                self.optimizer.register_parameter(self.pointwise_filters, 'pointwise_filters')
+                self.optimizer.register_parameter(self.biases, 'biases')
+
+    def forward(self, inputs: np.ndarray) -> np.ndarray:
+        self._initialize_filters_biases(inputs.shape)
+        raise NotImplementedError("SeparableConv2DLayer forward pass not yet implemented.")
+
+    def backward(self, grad: np.ndarray) -> np.ndarray:
+        raise NotImplementedError("SeparableConv2DLayer backward pass not yet implemented.")
+
+    def _init_optimizer(self, optimizer):
+        super()._init_optimizer(optimizer)
+        if self.depthwise_filters is not None and self.pointwise_filters is not None and self.biases is not None and self.optimizer is not None:
+            self.optimizer.register_parameter(self.depthwise_filters, 'depthwise_filters')
+            self.optimizer.register_parameter(self.pointwise_filters, 'pointwise_filters')
+            self.optimizer.register_parameter(self.biases, 'biases')
+
+    def _get_params_and_grads(self) -> List[Tuple[np.ndarray, np.ndarray]]:
+        params_and_grads = []
+        if self.d_depthwise_filters is not None and self.d_pointwise_filters is not None and self.d_biases is not None and self.depthwise_filters is not None and self.pointwise_filters is not None and self.biases is not None:
+            params_and_grads.extend([
+                (self.depthwise_filters, self.d_depthwise_filters),
+                (self.pointwise_filters, self.d_pointwise_filters),
+                (self.biases, self.d_biases)
+            ])
+        return params_and_grads
+
+class DepthwiseConv2DLayer(Layer):
+    """
+    A type of separable convolution where each input channel is convolved independently.
+    """
+    def __init__(self, kernel_size: Union[int, Tuple[int, int]], stride: int = 1, padding: str = 'valid', activation_function: Optional[Callable] = None, input_shape: Optional[Tuple[int, int, int]] = None):
+        super().__init__(num_neurons=None, num_inputs=None, activation_function=activation_function)
+        self.kernel_size = (kernel_size, kernel_size) if isinstance(kernel_size, int) else kernel_size
+        self.stride = stride
+        self.padding = padding.lower()
+        if self.padding not in ['valid', 'same']:
+            raise ValueError(f"Invalid padding type: '{padding}'. Must be 'valid' or 'same'.")
+        self.input_shape = input_shape
+        self.filters = None
+        self.biases = None
+        self.d_filters = None
+        self.d_biases = None
+
+    def _initialize_filters_biases(self, input_shape):
+        if self.filters is None:
+            input_channels = input_shape[-1]
+            scale = np.sqrt(2.0 / (np.prod(self.kernel_size) * 1)) # 1 because each input channel has its own filter
+            self.filters = np.random.randn(input_channels, *self.kernel_size, 1) * scale
+            self.biases = np.zeros(input_channels) # One bias per input channel
+            if self.optimizer:
+                self.optimizer.register_parameter(self.filters, 'filters')
+                self.optimizer.register_parameter(self.biases, 'biases')
+
+    def forward(self, inputs: np.ndarray) -> np.ndarray:
+        self._initialize_filters_biases(inputs.shape)
+        raise NotImplementedError("DepthwiseConv2DLayer forward pass not yet implemented.")
+
+    def backward(self, grad: np.ndarray) -> np.ndarray:
+        raise NotImplementedError("DepthwiseConv2DLayer backward pass not yet implemented.")
+
+    def _init_optimizer(self, optimizer):
+        super()._init_optimizer(optimizer)
+        if self.filters is not None and self.biases is not None and self.optimizer is not None:
+            self.optimizer.register_parameter(self.filters, 'filters')
+            self.optimizer.register_parameter(self.biases, 'biases')
+
+    def _get_params_and_grads(self) -> List[Tuple[np.ndarray, np.ndarray]]:
+        params_and_grads = []
+        if self.d_filters is not None and self.d_biases is not None and self.filters is not None and self.biases is not None:
+            params_and_grads.extend([
+                (self.filters, self.d_filters),
+                (self.biases, self.d_biases)
+            ])
+        return params_and_grads
+
+class ConvTranspose2DLayer(Layer):
+    """
+    Performs the transpose of a convolution operation, often used for upsampling in tasks like image segmentation or generative models.
+    """
+    def __init__(self, num_filters: int, kernel_size: Union[int, Tuple[int, int]], stride: int = 1, padding: str = 'valid', activation_function: Optional[Callable] = None, input_shape: Optional[Tuple[int, int, int]] = None):
+        super().__init__(num_neurons=None, num_inputs=None, activation_function=activation_function)
+        self.num_filters = num_filters
+        self.kernel_size = (kernel_size, kernel_size) if isinstance(kernel_size, int) else kernel_size
+        self.stride = stride
+        self.padding = padding.lower()
+        if self.padding not in ['valid', 'same']:
+            raise ValueError(f"Invalid padding type: '{padding}'. Must be 'valid' or 'same'.")
+        self.input_shape = input_shape
+        self.filters = None
+        self.biases = None
+        self.d_filters = None
+        self.d_biases = None
+
+    def _initialize_filters_biases(self, input_shape):
+        if self.filters is None:
+            input_channels = input_shape[-1]
+            scale = np.sqrt(2.0 / (np.prod(self.kernel_size) * input_channels))
+            self.filters = np.random.randn(input_channels, *self.kernel_size, self.num_filters) * scale # Note the order of dimensions
+            self.biases = np.zeros(self.num_filters)
+            if self.optimizer:
+                self.optimizer.register_parameter(self.filters, 'filters')
+                self.optimizer.register_parameter(self.biases, 'biases')
+
+    def forward(self, inputs: np.ndarray) -> np.ndarray:
+        self._initialize_filters_biases(inputs.shape)
+        raise NotImplementedError("ConvTranspose2DLayer forward pass not yet implemented.")
+
+    def backward(self, grad: np.ndarray) -> np.ndarray:
+        raise NotImplementedError("ConvTranspose2DLayer backward pass not yet implemented.")
 
     def _init_optimizer(self, optimizer):
         super()._init_optimizer(optimizer)

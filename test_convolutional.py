@@ -1,6 +1,6 @@
 from utils.functions import CostFunctions, ActivationFunctions
 from utils.optimizer import *
-from utils.layers import DenseLayer, Flatten, Conv2DLayer
+from layer import DenseLayer, FlattenLayer, Conv2DLayer
 from neuralNetwork import NeuralNetwork
 from utils.callbacks import Callback
 import numpy as np
@@ -66,11 +66,11 @@ for i in range(num_val_samples // 2, num_val_samples):
 
 # Create a simple convolutional network for binary classification
 layers = [
-    Conv2DLayer(32, (3, 3), input_shape=(16, 16, 1), activation_function=ActivationFunctions.leaky_relu, padding='same'),
-    Conv2DLayer(32, (3, 3), activation_function=ActivationFunctions.leaky_relu, padding='same'),
-    Flatten(),
-    DenseLayer(32, num_inputs=32 * 16 * 16, activation_function=ActivationFunctions.leaky_relu),
-    DenseLayer(1, num_inputs=32, activation_function=ActivationFunctions.sigmoid)
+    Conv2DLayer(2, (3, 3), input_shape=(16, 16, 1), activation_function=ActivationFunctions.leaky_relu, padding='same'),
+    Conv2DLayer(2, (3, 3), activation_function=ActivationFunctions.leaky_relu, padding='same'),
+    FlattenLayer(),
+    DenseLayer(8, num_inputs=2 * 16 * 16, activation_function=ActivationFunctions.leaky_relu),
+    DenseLayer(1, num_inputs=8, activation_function=ActivationFunctions.sigmoid)
 ]
 nn = NeuralNetwork(layers, CostFunctions.mean_squared_error)
 nn.compile(optimizer=AdamOptimizer(learning_rate=1e-2))

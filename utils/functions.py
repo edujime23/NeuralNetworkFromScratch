@@ -34,10 +34,9 @@ class ActivationFunctions:
         e_x = np.exp(x - np.max(x, axis=-1, keepdims=True))
         return e_x / np.sum(e_x, axis=-1, keepdims=True)
 
-    @staticmethod
-    def derivative(func: Callable, arg_index: int, *args, dx: float = np.float64(1) / np.uint64(2**32)) -> np.ndarray:
-        args_list = list(args)
-        original_arg = args_list[arg_index].copy()
-        perturbed_arg = original_arg + dx
-        args_list[arg_index] = perturbed_arg
-        return (func(*args_list) - func(*args)) / dx
+def derivative(func: Callable, arg_index: int, *args, dx: float = np.float64(1) / np.uint64(2**32)) -> np.ndarray:
+    args_list = list(args)
+    original_arg = args_list[arg_index].copy()
+    perturbed_arg = original_arg + dx
+    args_list[arg_index] = perturbed_arg
+    return (func(*args_list) - func(*args)) / dx

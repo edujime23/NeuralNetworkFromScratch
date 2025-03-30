@@ -1,11 +1,10 @@
 from utils.functions import CostFunctions, ActivationFunctions
 from utils.optimizer import *
-from utils.layers import DenseLayer
+from layer import *
 from neuralNetwork import NeuralNetwork
 from utils.callbacks import Callback
 import numpy as np
 import matplotlib.pyplot as plt
-from utils.metrics import Metrics
 
 class back(Callback):
     def on_epoch_end(self, epoch, logs=None):
@@ -32,16 +31,11 @@ layers = [
     DenseLayer(5, num_inputs=2, activation_function=ActivationFunctions.leaky_relu),
     DenseLayer(1, num_inputs=5, activation_function=ActivationFunctions.sigmoid)
 ]
-nn = NeuralNetwork(layers, CostFunctions.mean_squared_error)
-nn.compile(optimizer=AdamOptimizer(learning_rate=0.1))
+nn = NeuralNetwork(layers, CostFunctions.mean_squared_error, l1_lambda=1e-5, l2_lambda=1e-4)
+nn.compile(optimizer=AdamOptimizer(learning_rate=1e-4, weight_decay=1e-2))
 
 # Train the network
-nn.fit(inputs, outputs, epochs=1000, batch_size=16, validation_data=(validation_inputs, validation_outputs), callbacks=[back()])
-
-# Print initial weights and biases of the last layer
-last_layer = nn.layers[-1]
-print("\nInitial Weights of the Last Layer (first neuron):", last_layer.neurons[0].weights)
-print("Initial Bias of the Last Layer (first neuron):", last_layer.neurons[0].bias)
+nn.fit(inputs, outputs, epochs=1000, batch_size=16, validation_data=(validation_inputs, validation_outputs), callbacks=[back()], restore_best_weights=True)
 
 # Print initial predictions on a few training samples
 print("Initial Predictions (untrained network):")

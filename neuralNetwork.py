@@ -2,37 +2,36 @@ import pickle
 import numpy as np
 from typing import List, Optional, Callable, Tuple, Type
 from utils.functions import *
-from utils.layers import Layer
+from layer import *
 from utils.loss import Loss
-from utils.optimizer import AdamOptimizer, Optimizer  # Import the base Optimizer class
+from utils.optimizer import Optimizer  # Import the base Optimizer class
 from utils.callbacks import Callback
 from utils.metrics import Metrics # Assuming metrics are in utils/metrics.py
 
 # Neural Network class
 class NeuralNetwork:
-    def __init__(self, layers: List[Layer], cost_function: Callable, threshold: float = 1.0, gradient_clip: Optional[float] = 1.0, learning_rate: float = 0.001, optimizer_type: Type[Optimizer] = AdamOptimizer, optimizer_params: Optional[dict] = None):
+    def __init__(self, layers: List[Layer], cost_function: Callable, threshold: float = 1.0, gradient_clip: Optional[float] = 1.0, l1_lambda: float = 0.0, l2_lambda: float = 0.0):
         self.layers: List[Layer] = layers
         self.cost_function: Callable = cost_function
+        self.loss = None
         self.threshold: float = threshold
         self.gradient_clip: Optional[float] = gradient_clip
-        self.loss: Loss = Loss(cost_function)
-        self.optimizer_type: Type[Optimizer] = optimizer_type
-        self.optimizer_params: dict = optimizer_params if optimizer_params is not None else {'learning_rate': learning_rate}
         self.optimizer: Optional[Optimizer] = None
         self.metrics: List[str] = []
         self._is_compiled = False
+        self.l1_lambda: float = l1_lambda
+        self.l2_lambda: float = l2_lambda
 
     def compile(self, optimizer: Optional[Optimizer] = None, loss: Optional[Callable] = None, metrics: Optional[List[str]] = None):
         if optimizer:
             self.optimizer = optimizer
         else:
-            self.optimizer = self.optimizer_type(**self.optimizer_params)
+            self.optimizer = Optimizer(1e-2, self.gradient_clip)
         for layer in self.layers:
             layer._init_optimizer(self.optimizer)
             if hasattr(layer, 'threshold'): # Apply threshold only if the layer has this attribute
                 layer.threshold = self.threshold
-        if loss:
-            self.loss = Loss(loss)
+        self.loss = Loss(loss) if loss else Loss(CostFunctions.mean_squared_error)
         if metrics:
             self.metrics = metrics
         self._is_compiled = True
@@ -46,12 +45,17 @@ class NeuralNetwork:
     def fit(self, x: np.ndarray, y: np.ndarray, epochs: int = 1, batch_size: int = 32, validation_data: Optional[Tuple[np.ndarray, np.ndarray]] = None, callbacks: Optional[List[Callback]] = None, early_stopping_patience: int = 10, tol: float = 1e-4, restore_best_weights: bool = False):
         if not self._is_compiled:
             raise RuntimeError("The model must be compiled before training.")
-        x, y = np.array(x), np.array(y)
+        
+        # Ensure inputs and targets are float64
+        x = np.array(x, dtype=np.float64)
+        y = np.array(y, dtype=np.float64)
+        
         best_val_loss = float('inf')
         best_model_weights = None
         epochs_no_improvement = 0
         if validation_data:
-            validation_data = (np.array(validation_data[0]), np.array(validation_data[1]))
+            validation_data = (np.array(validation_data[0], dtype=np.float64), 
+                             np.array(validation_data[1], dtype=np.float64))
         self.callbacks = callbacks or [] # Store callbacks in the instance
 
         self._trigger_callbacks(self.callbacks, 'on_train_begin')
@@ -119,8 +123,21 @@ class NeuralNetwork:
         self._trigger_callbacks(self.callbacks, 'on_batch_start')
         outputs = self._forward_pass(x)
         loss_value = np.mean(self.loss(outputs, y))
+
+        # Calculate L1 and L2 regularization penalties
+        l1_penalty = 0.0
+        l2_penalty = 0.0
+        for layer in self.layers:
+            if hasattr(layer, 'weights'):
+                l1_penalty += np.sum(np.abs(layer.weights))
+                l2_penalty += np.sum(layer.weights ** 2)
+
+        # Add regularization penalties to the loss
+        loss_value += self.l1_lambda * l1_penalty
+        loss_value += self.l2_lambda * l2_penalty * 0.5  # Multiply L2 by 0.5 for easier derivative
+
         self._trigger_callbacks(self.callbacks, 'on_batch_loss', loss=loss_value)
-        gradients = self._backward_pass(y) # Get gradients from backward pass
+        self._backward_pass(y)
         for layer in self.layers:
             if hasattr(layer, 'weights') or hasattr(layer, 'biases'):
                 layer.update()
@@ -137,7 +154,7 @@ class NeuralNetwork:
         return inputs
 
     def _backward_pass(self, targets: np.ndarray) -> None:
-        grad = ActivationFunctions.derivative(self.loss, 0, self.layers[-1].signals, targets)
+        grad = derivative(self.loss, 0, self.layers[-1].signals, targets)
 
         self._trigger_callbacks(self.callbacks, 'on_backward_pass_begin', targets=targets, output_gradient=grad)
         self._trigger_callbacks(self.callbacks, 'on_backward_output_gradient', gradient=grad)
@@ -180,7 +197,7 @@ class NeuralNetwork:
         return logs
 
     def predict(self, x: np.ndarray) -> np.ndarray:
-        return self._forward_pass(x)
+        return self._forward_pass(np.array(x, dtype=np.float64))
 
     def save(self, filepath: str):
         params = {}
