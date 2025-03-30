@@ -66,11 +66,11 @@ for i in range(num_val_samples // 2, num_val_samples):
 
 # Create a simple convolutional network for binary classification
 layers = [
-    Conv2DLayer(4, (3, 3), input_shape=(16, 16, 1), activation_function=ActivationFunctions.leaky_relu, padding='same'),
-    Conv2DLayer(4, (3, 3), activation_function=ActivationFunctions.leaky_relu, padding='same'),
+    Conv2DLayer(32, (3, 3), input_shape=(16, 16, 1), activation_function=ActivationFunctions.leaky_relu, padding='same'),
+    Conv2DLayer(32, (3, 3), activation_function=ActivationFunctions.leaky_relu, padding='same'),
     Flatten(),
-    DenseLayer(8, num_inputs=4 * 16 * 16, activation_function=ActivationFunctions.leaky_relu),
-    DenseLayer(1, num_inputs=8, activation_function=ActivationFunctions.sigmoid)
+    DenseLayer(32, num_inputs=32 * 16 * 16, activation_function=ActivationFunctions.leaky_relu),
+    DenseLayer(1, num_inputs=32, activation_function=ActivationFunctions.sigmoid)
 ]
 nn = NeuralNetwork(layers, CostFunctions.mean_squared_error)
 nn.compile(optimizer=AdamOptimizer(learning_rate=1e-2))
@@ -79,7 +79,7 @@ nn.compile(optimizer=AdamOptimizer(learning_rate=1e-2))
 print("Range of input values:", np.min(inputs), np.max(inputs))
 
 # Train the network
-nn.fit(inputs, outputs, epochs=10, batch_size=16, validation_data=(validation_inputs, validation_outputs), callbacks=[back()])
+nn.fit(inputs, outputs, epochs=10, batch_size=1, validation_data=(validation_inputs, validation_outputs), callbacks=[back()])
 
 # Print initial predictions on a few training samples
 print("Initial Predictions (untrained network):")
