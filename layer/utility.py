@@ -99,13 +99,12 @@ class AveragePoolingLayer(PoolingLayer):
         d_input = np.zeros_like(self.inputs)
 
         # Optimized backward pass using broadcasting
-        for b, c in itertools.product(range(batch_size), range(num_channels)):
-            for i, j in itertools.product(range(output_height), range(output_width)):
-                start_h = i * sh
-                end_h = start_h + kh
-                start_w = j * sw
-                end_w = start_w + kw
-                d_input[b, start_h:end_h, start_w:end_w, c] += grad[b, i, j, c] / (kh * kw)
+        for b, c, i, j in itertools.product(range(batch_size), range(num_channels), range(output_height), range(output_width)):
+            start_h = i * sh
+            end_h = start_h + kh
+            start_w = j * sw
+            end_w = start_w + kw
+            d_input[b, start_h:end_h, start_w:end_w, c] += grad[b, i, j, c] / (kh * kw)
         return d_input
 
 class ReshapeLayer(Layer):

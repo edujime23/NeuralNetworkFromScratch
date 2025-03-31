@@ -21,6 +21,7 @@ class NeuralNetwork:
         self._is_compiled = False
         self.l1_lambda: float = l1_lambda
         self.l2_lambda: float = l2_lambda
+        self.callbacks = []
 
     def compile(self, optimizer: Optional[Optimizer] = None, loss: Optional[Callable] = None, metrics: Optional[List[str]] = None):
         if optimizer:

@@ -43,53 +43,59 @@ class SimpleRNNLayer(RecurrentLayer):
         if self.Wh is None:
             self._initialize_weights(self.inputs.shape)
         self.prev_hidden_state = self.hidden_state.copy()
-        self.last_pre_activation = np.dot(input_at_t, self.Wx) + \
-            np.dot(self.hidden_state, self.Wh) + self.b
+        self.last_pre_activation = np.matmul(input_at_t, self.Wx) + \
+            np.matmul(self.hidden_state, self.Wh) + self.b
         self.hidden_state = self.activation_function(self.last_pre_activation)
         return self.hidden_state
 
     def backward(self, grad: np.ndarray) -> np.ndarray:
         if self.Wh is None:
             return np.zeros_like(self.inputs)
-
-        d_input = np.zeros_like(self.inputs)
+        
         batch_size, time_steps, input_dim = self.inputs.shape
+        d_input = np.zeros_like(self.inputs)
         d_hidden_next = np.zeros_like(self.hidden_state)
-
+        
+        # Pre-allocate gradient matrices
         self.dWh = np.zeros_like(self.Wh)
         self.dWx = np.zeros_like(self.Wx)
         self.db = np.zeros_like(self.b)
-
+        
+        # Handle gradient format based on return_sequences flag
+        if not self.return_sequences:
+            # Expand grad to match timestep format for consistent processing
+            grad_expanded = np.zeros((batch_size, time_steps, self.units))
+            grad_expanded[:, -1, :] = grad
+            grad = grad_expanded
+        
         for t in reversed(range(time_steps)):
+            # Get current timestep data
             input_t = self.inputs[:, t, :]
-            hidden_prev = self.prev_hidden_state if t > 0 else np.zeros(
-                (batch_size, self.units))
+            hidden_prev = self.prev_hidden_state if t > 0 else np.zeros((batch_size, self.units))
             pre_activation = self.last_pre_activation[t] if self.return_sequences else self.last_pre_activation
-
-            # Calculate the derivative of the activation function
-            activation_derivative = derivative(
-                self.activation_function, 0, pre_activation)
-
-            # Gradient from the next time step
-            d_h = grad[:, t, :] + \
-                d_hidden_next if self.return_sequences else grad + d_hidden_next
-
-            # Gradient through the activation
+            
+            # Calculate activation derivative
+            activation_derivative = derivative(self.activation_function, 'all', pre_activation)
+            
+            # Compute d_h with gradient from next timestep
+            d_h = grad[:, t, :] + d_hidden_next
+            
+            # Gradient through activation
             d_h_raw = d_h * activation_derivative
-
-            # Gradients for weights and bias
-            self.dWh += np.dot(hidden_prev.T, d_h_raw)
-            self.dWx += np.dot(input_t.T, d_h_raw)
+            
+            # Using einsum for weight gradients
+            self.dWh += np.einsum('ij,ik->jk', hidden_prev, d_h_raw)
+            self.dWx += np.einsum('ij,ik->jk', input_t, d_h_raw)
+            
+            # Bias gradient - sum across batch dimension
             self.db += np.sum(d_h_raw, axis=0)
-
-            # Gradient for the previous hidden state
-            d_hidden_prev = np.dot(d_h_raw, self.Wh.T)
-
-            # Gradient for the input at this time step
-            d_input[:, t, :] = np.dot(d_h_raw, self.Wx.T)
-
-            d_hidden_next = d_hidden_prev
-
+            
+            # Gradient for previous hidden state using matrix multiplication
+            d_hidden_next = d_h_raw @ self.Wh.T
+            
+            # Gradient for input
+            d_input[:, t, :] = d_h_raw @ self.Wx.T
+        
         return d_input
 
     def _get_params_and_grads(self) -> List[Tuple[np.ndarray, np.ndarray]]:
@@ -253,32 +259,42 @@ class LSTMLayer(RecurrentLayer):
     def _step(self, input_at_t: np.ndarray) -> np.ndarray:
         if self.Wf is None:
             self._initialize_weights(self.inputs.shape)
-
+        
         self.last_input = input_at_t
         self.prev_cell_state = self.cell_state.copy()
-
-        # Forget gate
-        forget_gate_input = np.dot(input_at_t, self.Wf) + np.dot(self.hidden_state, self.Uf) + self.bf
+        
+        # Combine all gate computations using a single matrix multiplication
+        # Concatenate weights and biases for efficiency
+        # [Wf, Wi, Wc, Wo] and [Uf, Ui, Uc, Uo]
+        
+        # Input projections (batch_size x hidden_size*4)
+        input_projection = input_at_t @ np.hstack((self.Wf, self.Wi, self.Wc, self.Wo))
+        
+        # Hidden projections (batch_size x hidden_size*4)
+        hidden_projection = self.hidden_state @ np.hstack((self.Uf, self.Ui, self.Uc, self.Uo))
+        
+        # Add biases
+        all_gates = input_projection + hidden_projection + np.hstack((self.bf, self.bi, self.bc, self.bo))
+        
+        # Split the gates
+        h_size = self.hidden_state.shape[1]
+        forget_gate_input = all_gates[:, :h_size]
+        input_gate_input = all_gates[:, h_size:2*h_size]
+        cell_state_candidate_input = all_gates[:, 2*h_size:3*h_size]
+        output_gate_input = all_gates[:, 3*h_size:]
+        
+        # Activate the gates
         self.forget_gate_output = ActivationFunctions.sigmoid(forget_gate_input)
-
-        # Input gate
-        input_gate_input = np.dot(input_at_t, self.Wi) + np.dot(self.hidden_state, self.Ui) + self.bi
         self.input_gate_output = ActivationFunctions.sigmoid(input_gate_input)
-
-        # Candidate cell state
-        cell_state_candidate_input = np.dot(input_at_t, self.Wc) + np.dot(self.hidden_state, self.Uc) + self.bc
         self.cell_state_candidate = np.tanh(cell_state_candidate_input)
-
-        # Update cell state
-        self.cell_state = self.forget_gate_output * self.cell_state + self.input_gate_output * self.cell_state_candidate
-
-        # Output gate
-        output_gate_input = np.dot(input_at_t, self.Wo) + np.dot(self.hidden_state, self.Uo) + self.bo
         self.output_gate_output = ActivationFunctions.sigmoid(output_gate_input)
-
-        # Current hidden state
+        
+        # Update cell state with element-wise operations
+        self.cell_state = self.forget_gate_output * self.cell_state + self.input_gate_output * self.cell_state_candidate
+        
+        # Update hidden state
         self.hidden_state = self.output_gate_output * np.tanh(self.cell_state)
-
+        
         return self.hidden_state
 
     def backward(self, grad: np.ndarray) -> np.ndarray:
@@ -322,47 +338,47 @@ class LSTMLayer(RecurrentLayer):
 
             # Gradient for output gate
             dot = dht * np.tanh(ct)
-            doutput_gate_input = dot * derivative(ActivationFunctions.sigmoid, 0, np.dot(input_t, self.Wo) + np.dot(hidden_prev, self.Uo) + self.bo)
-            self.dWo += np.dot(input_t.T, doutput_gate_input)
-            self.dUo += np.dot(hidden_prev.T, doutput_gate_input)
+            doutput_gate_input = dot * derivative(ActivationFunctions.sigmoid, 'all', np.matmul(input_t, self.Wo) + np.matmul(hidden_prev, self.Uo) + self.bo)
+            self.dWo += np.matmul(input_t.T, doutput_gate_input)
+            self.dUo += np.matmul(hidden_prev.T, doutput_gate_input)
             self.dbo += np.sum(doutput_gate_input, axis=0)
 
             # Gradient for cell state
-            dct = dht * ot * derivative(np.tanh, 0, ct) + d_cell_next
+            dct = dht * ot * derivative(np.tanh, 'all', ct) + d_cell_next
 
             # Gradient for candidate cell state
             dct_candidate = dct * it
-            dcell_state_candidate_input = dct_candidate * derivative(np.tanh, 0, np.dot(input_t, self.Wc) + np.dot(hidden_prev, self.Uc) + self.bc)
-            self.dWc += np.dot(input_t.T, dcell_state_candidate_input)
-            self.dUc += np.dot(hidden_prev.T, dcell_state_candidate_input)
+            dcell_state_candidate_input = dct_candidate * derivative(np.tanh, 'all', np.matmul(input_t, self.Wc) + np.matmul(hidden_prev, self.Uc) + self.bc)
+            self.dWc += np.matmul(input_t.T, dcell_state_candidate_input)
+            self.dUc += np.matmul(hidden_prev.T, dcell_state_candidate_input)
             self.dbc += np.sum(dcell_state_candidate_input, axis=0)
 
             # Gradient for input gate
             dit = dct * ct_candidate
-            dinput_gate_input = dit * derivative(ActivationFunctions.sigmoid, 0, np.dot(input_t, self.Wi) + np.dot(hidden_prev, self.Ui) + self.bi)
-            self.dWi += np.dot(input_t.T, dinput_gate_input)
-            self.dUi += np.dot(hidden_prev.T, dinput_gate_input)
+            dinput_gate_input = dit * derivative(ActivationFunctions.sigmoid, 'all', np.matmul(input_t, self.Wi) + np.matmul(hidden_prev, self.Ui) + self.bi)
+            self.dWi += np.matmul(input_t.T, dinput_gate_input)
+            self.dUi += np.matmul(hidden_prev.T, dinput_gate_input)
             self.dbi += np.sum(dinput_gate_input, axis=0)
 
             # Gradient for forget gate
             dft = dct * cell_prev
-            dforget_gate_input = dft * derivative(ActivationFunctions.sigmoid, 0, np.dot(input_t, self.Wf) + np.dot(hidden_prev, self.Uf) + self.bf)
-            self.dWf += np.dot(input_t.T, dforget_gate_input)
-            self.dUf += np.dot(hidden_prev.T, dforget_gate_input)
+            dforget_gate_input = dft * derivative(ActivationFunctions.sigmoid, 'all', np.matmul(input_t, self.Wf) + np.matmul(hidden_prev, self.Uf) + self.bf)
+            self.dWf += np.matmul(input_t.T, dforget_gate_input)
+            self.dUf += np.matmul(hidden_prev.T, dforget_gate_input)
             self.dbf += np.sum(dforget_gate_input, axis=0)
 
             # Gradient for input at this time step
-            d_input_t = (np.dot(dforget_gate_input, self.Wf.T) +
-                         np.dot(dinput_gate_input, self.Wi.T) +
-                         np.dot(dcell_state_candidate_input, self.Wc.T) +
-                         np.dot(doutput_gate_input, self.Wo.T))
+            d_input_t = (np.matmul(dforget_gate_input, self.Wf.T) +
+                         np.matmul(dinput_gate_input, self.Wi.T) +
+                         np.matmul(dcell_state_candidate_input, self.Wc.T) +
+                         np.matmul(doutput_gate_input, self.Wo.T))
             d_input[:, t, :] = d_input_t
 
             # Gradient for previous hidden state
-            d_hidden_prev = (np.dot(dforget_gate_input, self.Uf.T) +
-                             np.dot(dinput_gate_input, self.Ui.T) +
-                             np.dot(dcell_state_candidate_input, self.Uc.T) +
-                             np.dot(doutput_gate_input, self.Uo.T))
+            d_hidden_prev = (np.matmul(dforget_gate_input, self.Uf.T) +
+                             np.matmul(dinput_gate_input, self.Ui.T) +
+                             np.matmul(dcell_state_candidate_input, self.Uc.T) +
+                             np.matmul(doutput_gate_input, self.Uo.T))
             d_hidden_next = d_hidden_prev
             d_cell_next = dct * ft
 
@@ -493,15 +509,15 @@ class GRULayer(RecurrentLayer):
         self.prev_hidden_state = self.hidden_state.copy()
 
         # Update gate
-        update_gate_input = np.dot(input_at_t, self.Wz) + np.dot(self.hidden_state, self.Uz) + self.bz
+        update_gate_input = np.matmul(input_at_t, self.Wz) + np.matmul(self.hidden_state, self.Uz) + self.bz
         self.update_gate_output = ActivationFunctions.sigmoid(update_gate_input)
 
         # Reset gate
-        reset_gate_input = np.dot(input_at_t, self.Wr) + np.dot(self.hidden_state, self.Ur) + self.br
+        reset_gate_input = np.matmul(input_at_t, self.Wr) + np.matmul(self.hidden_state, self.Ur) + self.br
         self.reset_gate_output = ActivationFunctions.sigmoid(reset_gate_input)
 
         # Current memory content
-        h_candidate_input = np.dot(input_at_t, self.Wh) + np.dot(self.reset_gate_output * self.hidden_state, self.Uh) + self.bh
+        h_candidate_input = np.matmul(input_at_t, self.Wh) + np.matmul(self.reset_gate_output * self.hidden_state, self.Uh) + self.bh
         self.current_memory = np.tanh(h_candidate_input)
 
         # Final hidden state
@@ -543,34 +559,34 @@ class GRULayer(RecurrentLayer):
 
             # Gradient for current memory content
             dcurrent_memory_raw = dht * zt
-            dh_candidate_input = dcurrent_memory_raw * derivative(np.tanh, 0, np.dot(input_t, self.Wh) + np.dot(rt * hidden_prev, self.Uh) + self.bh)
-            self.dWh += np.dot(input_t.T, dh_candidate_input)
+            dh_candidate_input = dcurrent_memory_raw * derivative(np.tanh, 'all', np.matmul(input_t, self.Wh) + np.matmul(rt * hidden_prev, self.Uh) + self.bh)
+            self.dWh += np.matmul(input_t.T, dh_candidate_input)
             self.dbh += np.sum(dh_candidate_input, axis=0)
 
             # Gradient for reset gate
-            dreset_gate_raw = np.dot(dh_candidate_input, self.Uh.T) * hidden_prev
-            dreset_gate_input = dreset_gate_raw * derivative(ActivationFunctions.sigmoid, 0, np.dot(input_t, self.Wr) + np.dot(hidden_prev, self.Ur) + self.br)
-            self.dWr += np.dot(input_t.T, dreset_gate_input)
-            self.dUr += np.dot(hidden_prev.T, dreset_gate_input)
+            dreset_gate_raw = np.matmul(dh_candidate_input, self.Uh.T) * hidden_prev
+            dreset_gate_input = dreset_gate_raw * derivative(ActivationFunctions.sigmoid, 'all', np.matmul(input_t, self.Wr) + np.matmul(hidden_prev, self.Ur) + self.br)
+            self.dWr += np.matmul(input_t.T, dreset_gate_input)
+            self.dUr += np.matmul(hidden_prev.T, dreset_gate_input)
             self.dbr += np.sum(dreset_gate_input, axis=0)
 
             # Gradient for update gate
             dupdate_gate_raw = dht * (ht - hidden_prev)
-            dupdate_gate_input = dupdate_gate_raw * derivative(ActivationFunctions.sigmoid, 0, np.dot(input_t, self.Wz) + np.dot(hidden_prev, self.Uz) + self.bz)
-            self.dWz += np.dot(input_t.T, dupdate_gate_input)
-            self.dUz += np.dot(hidden_prev.T, dupdate_gate_input)
+            dupdate_gate_input = dupdate_gate_raw * derivative(ActivationFunctions.sigmoid, 'all', np.matmul(input_t, self.Wz) + np.matmul(hidden_prev, self.Uz) + self.bz)
+            self.dWz += np.matmul(input_t.T, dupdate_gate_input)
+            self.dUz += np.matmul(hidden_prev.T, dupdate_gate_input)
             self.dbz += np.sum(dupdate_gate_input, axis=0)
 
             # Gradient for input at this time step
-            d_input_t = (np.dot(dupdate_gate_input, self.Wz.T) +
-                         np.dot(dreset_gate_input, self.Wr.T) +
-                         np.dot(dh_candidate_input, self.Wh.T))
+            d_input_t = (np.matmul(dupdate_gate_input, self.Wz.T) +
+                         np.matmul(dreset_gate_input, self.Wr.T) +
+                         np.matmul(dh_candidate_input, self.Wh.T))
             d_input[:, t, :] = d_input_t
 
             # Gradient for previous hidden state
-            d_hidden_prev = (np.dot(dupdate_gate_input, self.Uz.T) +
-                             np.dot(dreset_gate_input, self.Ur.T) +
-                             np.dot(dh_candidate_input, self.Uh.T) * rt +
+            d_hidden_prev = (np.matmul(dupdate_gate_input, self.Uz.T) +
+                             np.matmul(dreset_gate_input, self.Ur.T) +
+                             np.matmul(dh_candidate_input, self.Uh.T) * rt +
                              dht * (1 - zt))
             d_hidden_next = d_hidden_prev
 
@@ -726,7 +742,7 @@ class IndRNNLayer(RecurrentLayer):
         self.last_input = input_at_t
         self.prev_hidden_state = self.hidden_state.copy()
 
-        self.last_pre_activation = np.dot(input_at_t, self.Wx) + self.hidden_state * self.Wr + self.b
+        self.last_pre_activation = np.matmul(input_at_t, self.Wx) + self.hidden_state * self.Wr + self.b
         self.hidden_state = self.activation_function(self.last_pre_activation)
         return self.hidden_state
 
@@ -748,7 +764,7 @@ class IndRNNLayer(RecurrentLayer):
             pre_activation = self.last_pre_activation[t] if self.return_sequences else self.last_pre_activation
 
             # Calculate the derivative of the activation function
-            activation_derivative = derivative(self.activation_function, 0, pre_activation)
+            activation_derivative = derivative(self.activation_function, 'all', pre_activation)
 
             # Gradient from the next time step
             d_h = grad[:, t, :] + d_hidden_next if self.return_sequences else grad + d_hidden_next
@@ -757,7 +773,7 @@ class IndRNNLayer(RecurrentLayer):
             d_h_raw = d_h * activation_derivative
 
             # Gradients for weights and bias
-            self.dWx += np.dot(input_t.T, d_h_raw)
+            self.dWx += np.matmul(input_t.T, d_h_raw)
             self.dWr += np.sum(d_h_raw * hidden_prev, axis=0)
             self.db += np.sum(d_h_raw, axis=0)
 
@@ -765,7 +781,7 @@ class IndRNNLayer(RecurrentLayer):
             d_hidden_prev = d_h_raw * self.Wr
 
             # Gradient for the input at this time step
-            d_input[:, t, :] = np.dot(d_h_raw, self.Wx.T)
+            d_input[:, t, :] = np.matmul(d_h_raw, self.Wx.T)
 
             d_hidden_next = d_hidden_prev
 
@@ -830,7 +846,7 @@ class CTRNNLayer(RecurrentLayer):
             external_input = inputs[:, t, :]
             # Euler method for discretization
             d_state_dt = (1.0 / self.time_constants) * (
-                -self.state + np.dot(self.activation_function(self.state), self.weights.T) + external_input + self.biases
+                -self.state + np.matmul(self.activation_function(self.state), self.weights.T) + external_input + self.biases
             )
             self.state = self.state + time_step_size * d_state_dt
 
@@ -854,7 +870,7 @@ class CTRNNLayer(RecurrentLayer):
             state_t = self.state
 
             # 1. Derivative of activation
-            activation_derivative = derivative(self.activation_function, 0, state_t)
+            activation_derivative = derivative(self.activation_function, 'all', state_t)
 
             # 2. Gradient from the next time step
             d_h = grad[:, t, :] + d_state_next if self.return_sequences else grad + d_state_next
@@ -863,7 +879,7 @@ class CTRNNLayer(RecurrentLayer):
             d_state_raw = d_h * activation_derivative
 
             # Gradients for weights and biases (accumulate)
-            d_weights += np.dot(d_state_raw.T, state_t).T
+            d_weights += np.matmul(d_state_raw.T, state_t).T
             d_biases += np.sum(d_state_raw, axis=0)
 
             # 4. Gradient for the previous state (simplified Euler-like step)

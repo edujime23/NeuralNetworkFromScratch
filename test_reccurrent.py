@@ -66,15 +66,20 @@ def mean_squared_error_prime(predicted, target):
     elif predicted.shape == target.shape:
         return 2 * (predicted - target) / target.shape[0]
     elif predicted.ndim == 2 and target.ndim == 2 and predicted.shape[1] == target.shape[1] and predicted.shape[0] > target.shape[0]:
-        # Derivative for the special CTRNNLayer case
-        batch_size = target.shape[0]
-        time_steps_local = predicted.shape[0] // batch_size
-        grad_predicted = np.zeros_like(predicted)
-        indices = np.arange(batch_size) * time_steps_local + (time_steps_local - 1)
-        grad_predicted[indices] = 2 * (predicted[indices] - target) / target.shape[0]
-        return grad_predicted
+        return _extracted_from_mean_squared_error_prime_11(target, predicted)
     else:
         raise ValueError(f"Shapes of predicted {predicted.shape} and target {target.shape} are incompatible for MSE derivative. Predicted: {predicted.shape}, Target: {target.shape}")
+
+
+# TODO Rename this here and in `mean_squared_error_prime`
+def _extracted_from_mean_squared_error_prime_11(target, predicted):
+    # Derivative for the special CTRNNLayer case
+    batch_size = target.shape[0]
+    time_steps_local = predicted.shape[0] // batch_size
+    grad_predicted = np.zeros_like(predicted)
+    indices = np.arange(batch_size) * time_steps_local + (time_steps_local - 1)
+    grad_predicted[indices] = 2 * (predicted[indices] - target) / target.shape[0]
+    return grad_predicted
 
 # Replace the original functions
 CostFunctions.mean_squared_error = mean_squared_error
@@ -106,14 +111,7 @@ for rnn_layer in recurrent_layers:
     val_inputs, val_outputs = generate_sequence_data(200, time_steps, input_dim)
     val_outputs = val_outputs.mean(axis=1).reshape(200, 1)
 
-    # Instantiate the recurrent layer
-    if layer_class == CTRNNLayer:
-        recurrent_layer = layer_class(**layer_kwargs)
-    elif layer_class == BidirectionalRNNLayer:
-        recurrent_layer = layer_class(**layer_kwargs)
-    else:
-        recurrent_layer = layer_class(**layer_kwargs)
-
+    recurrent_layer = layer_class(**layer_kwargs)
     if layer_class == BidirectionalRNNLayer:
         rnn_output_dim = recurrent_layer.forward_layer.units * 2 # Bidirectional layer's output dim
     else:

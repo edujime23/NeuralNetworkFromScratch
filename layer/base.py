@@ -63,30 +63,46 @@ class ConvolutionalLayer(Layer):
     def __init__(self, num_filters: int, kernel_size: Union[int, Tuple[int, ...]], stride: int = 1, padding: str = 'valid', activation_function: Optional[Callable] = None, input_shape: Optional[Tuple[int, ...]] = None):
         super().__init__(num_neurons=None, num_inputs=None, activation_function=activation_function)
         self.num_filters = num_filters
-        self.kernel_size = self._normalize_kernel_size(kernel_size)
-        self.stride = stride
+        self.input_shape = input_shape
+        self.kernel_size = kernel_size  # Store original kernel_size
+        self.stride = stride  # Store original stride
         self.padding = padding.lower()
         if self.padding not in ['valid', 'same']:
             raise ValueError(f"Invalid padding type: '{padding}'. Must be 'valid' or 'same'.")
-        self.input_shape = input_shape
         self.filters = None
         self.biases = None
         self.d_filters = None
         self.d_biases = None
+        self._normalized_kernel_size = None  # Will be set during forward pass
+        self._normalized_stride = None  # Will be set during forward pass
 
-    def _normalize_kernel_size(self, kernel_size: Union[int, Tuple[int, ...]]) -> Tuple[int, ...]:
+    def _normalize_kernel_size(self, kernel_size: Union[int, Tuple[int, ...]], num_dims: int) -> Tuple[int, ...]:
         if isinstance(kernel_size, int):
-            return (kernel_size,) * self._get_num_spatial_dims()
+            return (kernel_size,) * num_dims
         return tuple(kernel_size)
 
-    def _get_num_spatial_dims(self) -> int:
-        raise NotImplementedError
+    def _get_num_spatial_dims(self, input_shape: Optional[Tuple[int, ...]] = None) -> int:
+        shape = input_shape if input_shape is not None else self.input_shape
+        if shape is None:
+            raise ValueError("Input shape must be provided to determine the number of spatial dimensions.")
+        return len(shape) - 2  # Subtract batch size and number of channels
+
+    def _normalize_shapes(self, input_shape: Tuple[int, ...]):
+        num_dims = self._get_num_spatial_dims(input_shape)
+        if self._normalized_kernel_size is None:
+            self._normalized_kernel_size = self._normalize_kernel_size(self.kernel_size, num_dims)
+        if self._normalized_stride is None:
+            if isinstance(self.stride, int):
+                self._normalized_stride = (self.stride,) * num_dims
+            else:
+                self._normalized_stride = tuple(self.stride)
 
     def _initialize_filters_biases(self, input_shape):
         if self.filters is None:
+            self._normalize_shapes(input_shape)
             input_channels = input_shape[-1]
-            scale = np.sqrt(2.0 / (np.prod(self.kernel_size) * input_channels))
-            self.filters = np.random.randn(self.num_filters, *self.kernel_size, input_channels) * scale
+            scale = np.sqrt(2.0 / (np.prod(self._normalized_kernel_size) * input_channels))
+            self.filters = np.random.randn(self.num_filters, *self._normalized_kernel_size, input_channels) * scale
             self.biases = np.zeros(self.num_filters)
             if self.optimizer:
                 self.optimizer.register_parameter(self.filters, 'filters')
@@ -112,19 +128,28 @@ class PoolingLayer(Layer):
     Base class for pooling layers.
     """
     def __init__(self, pool_size: Union[int, Tuple[int, int]], stride: Optional[Union[int, Tuple[int, int]]] = None, input_shape: Optional[Tuple[int, ...]] = None):
-        super().__init__(input_shape)
-        if isinstance(pool_size, int):
-            self.pool_size = (pool_size, pool_size)
-        else:
-            self.pool_size = pool_size
+        super().__init__()
+        self.pool_size = pool_size
+        self.stride = stride
+        self.input_shape = input_shape
+        self._normalized_pool_size = None
+        self._normalized_stride = None
 
-        if stride is None:
-            self.stride = self.pool_size
-        elif isinstance(stride, int):
-            self.stride = (stride, stride)
-        else:
-            self.stride = stride
-        self.inputs = None
+    def _normalize_shapes(self, input_shape: Tuple[int, ...]):
+        num_dims = len(input_shape) - 2  # Subtract batch size and channels
+        if self._normalized_pool_size is None:
+            if isinstance(self.pool_size, int):
+                self._normalized_pool_size = (self.pool_size,) * num_dims
+            else:
+                self._normalized_pool_size = tuple(self.pool_size)
+        
+        if self._normalized_stride is None:
+            if self.stride is None:
+                self._normalized_stride = self._normalized_pool_size
+            elif isinstance(self.stride, int):
+                self._normalized_stride = (self.stride,) * num_dims
+            else:
+                self._normalized_stride = tuple(self.stride)
 
     def _get_output_shape(self, input_shape: Tuple[int, ...]) -> Tuple[int, ...]:
         raise NotImplementedError("Subclasses must implement _get_output_shape")

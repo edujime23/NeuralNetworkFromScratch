@@ -1,5 +1,5 @@
 import numpy as np
-from typing import Callable
+from typing import Callable, Union
 
 class CostFunctions:
     @staticmethod
@@ -7,7 +7,7 @@ class CostFunctions:
         return (predicted - target) ** 2
 
     @staticmethod
-    def binary_cross_entropy(predicted: np.ndarray, target: np.ndarray) -> np.ndarray:
+    def cross_entropy(predicted: np.ndarray, target: np.ndarray) -> np.ndarray:
         epsilon = 1e-15  # To avoid division by zero
         predicted = predicted + epsilon
         return -(target * np.log(predicted) + (1 - target) * np.log(1 - predicted))
@@ -34,9 +34,40 @@ class ActivationFunctions:
         e_x = np.exp(x - np.max(x, axis=-1, keepdims=True))
         return e_x / np.sum(e_x, axis=-1, keepdims=True)
 
-def derivative(func: Callable, arg_index: int, *args, dx: float = np.float64(1) / np.uint64(2**32)) -> np.ndarray:
-    args_list = list(args)
-    original_arg = args_list[arg_index].copy()
-    perturbed_arg = original_arg + dx
-    args_list[arg_index] = perturbed_arg
-    return (func(*args_list) - func(*args)) / dx
+def derivative(func: Callable, arg_index: Union[int, str], *args, dx: float = 1e-12) -> np.ndarray:
+    """Calculate numerical derivative of a function with respect to specified argument.
+
+    Args:
+        func: Function to differentiate
+        arg_index: Index of argument to differentiate with respect to, or 'all'
+        *args: Arguments to pass to the function
+        dx: Small change for numerical differentiation
+
+    Returns:
+        Numerical derivative array
+    """
+    # Convert args to numpy array for vectorized operations
+    args = [np.asarray(arg) for arg in args]
+    
+    if not args:
+        raise ValueError("At least one argument required")
+        
+    if isinstance(arg_index, int):
+        if not 0 <= arg_index < len(args):
+            raise ValueError(f"arg_index {arg_index} out of range")
+            
+        # Create copy of arguments
+        perturbed_args = [arg.copy() for arg in args]
+        perturbed_args[arg_index] += dx
+        
+    elif arg_index == "all":
+        perturbed_args = [arg + dx for arg in args]
+        
+    else:
+        raise ValueError("arg_index must be an integer or 'all'")
+
+    # Central difference for better accuracy
+    forward = func(*perturbed_args)
+    backward = func(*args)
+    
+    return (forward - backward) / dx

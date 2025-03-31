@@ -16,7 +16,7 @@ class DenseLayer(Layer):
         signals (Optional[np.ndarray]): Output of the layer after activation. Defaults to None.
         _is_initialized (bool): Flag to track if the layer has been initialized with the input size.
     """
-    def __init__(self, num_neurons: int, num_inputs: Optional[int], activation_function: Callable[[np.ndarray], np.ndarray], threshold: float = 1.0):
+    def __init__(self, num_neurons: int, num_inputs: Optional[int] = None, activation_function: Optional[Callable] = None, threshold: float = 1.0):
         """Initializes the optimized dense layer.
 
         Args:
@@ -25,8 +25,9 @@ class DenseLayer(Layer):
             activation_function (Callable[[np.ndarray], np.ndarray]): Activation function for the neurons.
             threshold (float): Threshold value for the layer's output. Defaults to 1.0.
         """
-        super().__init__(num_neurons, num_inputs, activation_function, threshold)
+        super().__init__(num_neurons=num_neurons, num_inputs=num_inputs, activation_function=activation_function)
         self.num_neurons = num_neurons
+        self.num_inputs = num_inputs
         self.activation_function = activation_function
         self.threshold = threshold
         self.weights = None
@@ -60,6 +61,7 @@ class DenseLayer(Layer):
         if not self._is_initialized:
             self._initialize_weights_and_biases(inputs.shape[1])
             self._is_initialized = True
+    
         
         # Ensure inputs are contiguous and float64
         self.inputs = np.ascontiguousarray(inputs, dtype=np.float64)
@@ -85,7 +87,7 @@ class DenseLayer(Layer):
         Returns:
             np.ndarray: The gradient passed to the previous layer.
         """
-        derivative = deriv(self.activation_function, 0, self.signals)
+        derivative = deriv(self.activation_function, 'all', self.signals)
         
         # In-place multiplication for gradients
         delta = np.multiply(grad, derivative, out=derivative)

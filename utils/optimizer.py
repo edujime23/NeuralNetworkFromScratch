@@ -16,7 +16,7 @@ class Optimizer:
         param_id = id(param)
         if param_id not in self.param_states:
             self.param_states[param_id] = {}
-        self._initialize_param_state(param, name, param_id)
+            self._initialize_param_state(param, name, param_id)
 
     def _initialize_param_state(self, param: np.ndarray, name: str, param_id: int):
         """Initializes optimizer-specific values for a parameter."""
@@ -25,8 +25,14 @@ class Optimizer:
     def update(self, params_and_grads: List[Tuple[np.ndarray, np.ndarray]]):
         """Updates the parameters based on their gradients."""
         self.t += 1
-        lr = self.learning_rate
+        lr = self.learning_rate() if callable(self.learning_rate) else self.learning_rate
+        
         for param, grad in params_and_grads:
+            param_id = id(param)
+            # Check if parameter is registered
+            if param_id not in self.param_states:
+                self.register_parameter(param, f'param_{param_id}')
+                
             if self.gradient_clip is not None:
                 grad = np.clip(grad, -self.gradient_clip, self.gradient_clip)
             self._update_single_param(param, grad, lr)
@@ -55,7 +61,7 @@ class AdamOptimizer(Optimizer):
         v = state['v']
 
         m_new = self.beta1 * m + (1 - self.beta1) * grad
-        v_new = self.beta2 * v + (1 - self.beta2) * (grad ** 2)
+        v_new = self.beta2 * v + (1 - self.beta2) * (np.pow(grad, 2))
 
         m_hat = m_new / (1 - self.beta1 ** self.t)
         v_hat = v_new / (1 - self.beta2 ** self.t)

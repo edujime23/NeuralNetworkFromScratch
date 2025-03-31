@@ -3,185 +3,180 @@ import numpy as np
 from typing import Optional, Callable, Tuple, Union, List
 from layer.base import ConvolutionalLayer
 from utils.functions import derivative as deriv
-from scipy.signal import convolve2d
+from scipy.signal import convolve2d, convolve
 
-class Conv1DLayer(ConvolutionalLayer):
+class ConvNDLayer(ConvolutionalLayer):
     """
-    Performs 1D convolution, useful for sequence data like text, audio, or time series.
-    """
-    def __init__(self, num_filters: int, kernel_size: int, stride: int = 1, padding: str = 'valid', activation_function: Optional[Callable] = None, input_shape: Optional[Tuple[int, int, int]] = None):
-        super().__init__(num_filters, kernel_size, stride, padding, activation_function, input_shape)
-        self.inputs = None
-        self.signals = None
-
-    def _get_num_spatial_dims(self) -> int:
-        return 1
-
-    def forward(self, inputs: np.ndarray) -> np.ndarray:
-        self._initialize_filters_biases(inputs.shape)
-        self.inputs = inputs
-        batch_size, seq_len, in_channels = inputs.shape
-        num_filters, kernel_size, _ = self.filters.shape
-        output_len = int((seq_len - kernel_size + 2 * self._get_padding_amount(seq_len, kernel_size, self.stride, self.padding)) / self.stride + 1)
-        output = np.zeros((batch_size, output_len, num_filters))
-
-        for i in range(batch_size):
-            for f in range(num_filters):
-                for c in range(in_channels):
-                    padded_input = self._pad_input_1d(inputs[i, :, c], kernel_size, self.stride, self.padding)
-                    convolved = np.convolve(padded_input, self.filters[f, :, c], mode='valid')[::self.stride]
-                    output[i, :, f] += convolved
-
-        output += self.biases
-
-        if self.activation_function:
-            self.signals = self.activation_function(output)
-            return self.signals
-        else:
-            self.signals = output
-            return output
-
-    def _pad_input_1d(self, input_1d: np.ndarray, kernel_size: int, stride: int, padding: str) -> np.ndarray:
-        if padding == 'same':
-            output_len = int(np.ceil(input_1d.shape[0] / stride))
-            padding_needed = max(0, (output_len - 1) * stride + kernel_size - input_1d.shape[0])
-            padding_before = padding_needed // 2
-            padding_after = padding_needed - padding_before
-            return np.pad(input_1d, (padding_before, padding_after), mode='constant')
-        elif padding == 'valid':
-            return input_1d
-        else:
-            raise ValueError(f"Invalid padding type: {padding}")
-
-    def _get_padding_amount(self, input_len: int, kernel_size: int, stride: int, padding: str) -> int:
-        if padding == 'same':
-            output_len = int(np.ceil(input_len / stride))
-            return max(0, (output_len - 1) * stride + kernel_size - input_len)
-        elif padding == 'valid':
-            return 0
-        else:
-            raise ValueError(f"Invalid padding type: {padding}")
-
-    def backward(self, grad: np.ndarray) -> np.ndarray:
-        inputs = self.inputs
-        batch_size, seq_len, in_channels = inputs.shape
-        num_filters, kernel_size, _ = self.filters.shape
-        output_len = grad.shape[1]
-        stride = self.stride
-
-        # Apply activation derivative
-        if self.activation_function:
-            derivative = deriv(self.activation_function, 0, self.signals)
-            grad = grad * derivative
-
-        # Initialize gradients
-        self.d_filters = np.zeros_like(self.filters)
-        self.d_biases = np.sum(grad, axis=(0, 1)) / batch_size
-        d_input = np.zeros_like(inputs)
-
-        for i in range(batch_size):
-            for f in range(num_filters):
-                for c in range(in_channels):
-                    input_slice = self.inputs[i, :, c]
-                    padded_input = self._pad_input_1d(input_slice, kernel_size, stride, self.padding)
-
-                    # Gradient for filters
-                    grad_slice = grad[i, :, f]
-                    upsampled_grad = np.zeros(padded_input.shape[0])
-                    for j in range(output_len):
-                        index = j * stride
-                        if index < upsampled_grad.shape[0]:
-                            upsampled_grad[index] = grad_slice[j]
-                    self.d_filters[f, :, c] += np.convolve(padded_input, upsampled_grad, mode='valid')
-
-                    # Gradient for input
-                    padded_grad_output = np.pad(grad_slice, (kernel_size - 1, kernel_size - 1), mode='constant')
-                    d_input[i, :, c] += np.convolve(padded_grad_output, np.flip(self.filters[f, :, c]), mode='valid')
-
-        self.d_filters /= batch_size
-        return d_input
-
-class Conv2DLayer(ConvolutionalLayer):
-    """
-    Performs 2D convolution, the fundamental building block for processing image data.
-    It learns spatial hierarchies of features.
+    Performs N-dimensional convolution with optimized implementation.
     """
     def __init__(self,
                  num_filters: int,
-                 kernel_size: Union[int, Tuple[int, int]],
-                 stride: int = 1,
+                 kernel_size: Union[int, Tuple[int, ...]],
+                 stride: Union[int, Tuple[int, ...]] = 1,
                  padding: str = 'valid',
                  activation_function: Optional[Callable] = None,
-                 input_shape: Optional[Tuple[int, int, int]] = None):
+                 input_shape: Optional[Tuple[int, ...]] = None):
         super().__init__(num_filters, kernel_size, stride, padding, activation_function, input_shape)
         self.inputs = None
         self.signals = None
+        self._normalized = False
+        self._original_kernel_size = kernel_size
+        self._original_stride = stride
+        self._tmp_grad = None  # For caching intermediate results
+
+    def _normalize_params(self, num_spatial_dims: int):
+        if self._normalized:
+            return
+        if isinstance(self._original_kernel_size, int):
+            self.kernel_size = (self._original_kernel_size,) * num_spatial_dims
+        elif len(self._original_kernel_size) < num_spatial_dims:
+            # Pad with 1s for remaining dimensions
+            self.kernel_size = self._original_kernel_size + (1,) * (num_spatial_dims - len(self._original_kernel_size))
+        elif len(self._original_kernel_size) > num_spatial_dims:
+            raise ValueError(f"Kernel size {self._original_kernel_size} has more dimensions than input {num_spatial_dims}")
+        else:
+            self.kernel_size = self._original_kernel_size
+
+        if isinstance(self._original_stride, int):
+            self.stride = (self._original_stride,) * num_spatial_dims
+        elif len(self._original_stride) < num_spatial_dims:
+            # Pad with 1s for remaining dimensions
+            self.stride = self._original_stride + (1,) * (num_spatial_dims - len(self._original_stride))
+        elif len(self._original_stride) > num_spatial_dims:
+            raise ValueError(f"Stride {self._original_stride} has more dimensions than input {num_spatial_dims}")
+        else:
+            self.stride = self._original_stride
+        self._normalized = True
 
     def _get_num_spatial_dims(self) -> int:
-        return 2
+        if self.inputs is not None:
+            return len(self.inputs.shape) - 2
+        if self.input_shape is None:
+            raise ValueError("Input shape must be provided to determine the number of spatial dimensions.")
+        return len(self.input_shape) - 2
 
-    def _im2col(self, inputs: np.ndarray) -> np.ndarray:
-        batch_size, input_height, input_width, input_channels = inputs.shape
-        kernel_height, kernel_width = self.kernel_size
-        stride_h, stride_w = self.stride, self.stride
+    def _initialize_filters_biases(self, input_shape: Tuple[int, ...]):
+        if self.filters is None:
+            num_spatial_dims = self._get_num_spatial_dims()
+            in_channels = input_shape[-1]
+            kernel_shape = (self.num_filters, *self.kernel_size, in_channels)
+            scale = np.sqrt(2.0 / np.prod(self.kernel_size) * in_channels)
+            self.filters = np.random.randn(*kernel_shape) * scale
+            self.biases = np.zeros(self.num_filters)
+            if self.optimizer:
+                # Ensure parameters are registered with the optimizer
+                self._reg_params()
 
-        if self.padding == 'same':
-            pad_h = int(((input_height - 1) * stride_h + kernel_height - input_height) / 2)
-            pad_w = int(((input_width - 1) * stride_w + kernel_width - input_width) / 2)
-            padded_inputs = np.pad(inputs, ((0, 0), (pad_h, pad_h), (pad_w, pad_w), (0, 0)), mode='constant')
+    def _reg_params(self):
+        """Register parameters with the optimizer"""
+        if self.optimizer:
+            self.optimizer.register_parameter(self.filters, 'filters')
+            self.optimizer.register_parameter(self.biases, 'biases')
+
+    def _init_optimizer(self, optimizer):
+        """Initialize optimizer and register parameters"""
+        super()._init_optimizer(optimizer)
+        if self.filters is not None and self.biases is not None:
+            self._reg_params()
+
+    def _pad_input_nd(self, inputs: np.ndarray, kernel_size: Tuple[int, ...], stride: Tuple[int, ...], padding: str) -> np.ndarray:
+        num_spatial_dims = self._get_num_spatial_dims()
+        padding_amounts = [(0, 0)]  # For batch size
+        if padding == 'same':
+            input_spatial_shape = inputs.shape[1:-1]
+
+            for i in range(num_spatial_dims):
+                input_len = input_spatial_shape[i]
+                kernel_len = kernel_size[i]
+                stride_len = stride[i]
+                output_len = int(np.ceil(input_len / stride_len))
+                padding_needed = max(0, (output_len - 1) * stride_len + kernel_len - input_len)
+                padding_before = padding_needed // 2
+                padding_after = padding_needed - padding_before
+                padding_amounts.append((padding_before, padding_after))
+        elif padding == 'valid':
+            for _ in range(num_spatial_dims):
+                padding_amounts.append((0, 0))
         else:
-            padded_inputs = inputs
+            raise ValueError(f"Invalid padding type: {padding}")
 
-        padded_height, padded_width = padded_inputs.shape[1], padded_inputs.shape[2]
-        output_height = (padded_height - kernel_height) // stride_h + 1
-        output_width = (padded_width - kernel_width) // stride_w + 1
+        padding_amounts.append((0, 0))  # For channels
+        return np.pad(inputs, padding_amounts, mode='constant')
 
-        col = np.zeros((batch_size, kernel_height * kernel_width * input_channels, output_height * output_width))
+    def _get_output_shape(self, input_shape: Tuple[int, ...], kernel_size: Tuple[int, ...], stride: Tuple[int, ...], padding: str) -> Tuple[int, ...]:
+        batch_size = input_shape[0]
+        in_channels = input_shape[-1]
+        num_spatial_dims = self._get_num_spatial_dims()
+        input_spatial_shape = input_shape[1:-1]
+        output_spatial_shape = []
 
-        for b in range(batch_size):
-            for y in range(output_height):
-                for x in range(output_width):
-                    start_y = y * stride_h
-                    end_y = start_y + kernel_height
-                    start_x = x * stride_w
-                    end_x = start_x + kernel_width
-                    patch = padded_inputs[b, start_y:end_y, start_x:end_x, :].reshape(-1)
-                    col[b, :, y * output_width + x] = patch
-        return col
+        if padding == 'same':
+            output_spatial_shape.extend(
+                int(np.ceil(input_spatial_shape[i] / stride[i]))
+                for i in range(num_spatial_dims)
+            )
+        elif padding == 'valid':
+            output_spatial_shape.extend(
+                int((input_spatial_shape[i] - kernel_size[i]) / stride[i] + 1)
+                for i in range(num_spatial_dims)
+            )
+        else:
+            raise ValueError(f"Invalid padding type: {padding}")
+
+        return (batch_size, *output_spatial_shape, self.num_filters)
+
+    def _extract_patches(self, padded_inputs):
+        """Extract patches using stride tricks for efficiency"""
+        batch_size = padded_inputs.shape[0]
+        in_channels = padded_inputs.shape[-1]
+        num_spatial_dims = self._get_num_spatial_dims()
+        
+        # Calculate output spatial dimensions
+        output_shape = self._get_output_shape(self.inputs.shape, self.kernel_size, self.stride, self.padding)
+        output_spatial_shape = output_shape[1:-1]
+        
+        # Create proper shape and strides for as_strided
+        patches_shape = (batch_size,) + output_spatial_shape + self.kernel_size + (in_channels,)
+        
+        # Calculate strides for each dimension
+        patches_strides = (padded_inputs.strides[0],)
+        for i in range(num_spatial_dims):
+            patches_strides += (padded_inputs.strides[i+1] * self.stride[i],)
+        for i in range(num_spatial_dims):
+            patches_strides += (padded_inputs.strides[i+1],)
+        patches_strides += (padded_inputs.strides[-1],)
+        
+        # Use as_strided for efficient patch extraction
+        return np.lib.stride_tricks.as_strided(padded_inputs, shape=patches_shape, strides=patches_strides)
 
     def forward(self, inputs: np.ndarray) -> np.ndarray:
-        self._initialize_filters_biases(inputs.shape)
         self.inputs = inputs
-        batch_size, input_height, input_width, input_channels = inputs.shape
-        num_filters, kernel_height, kernel_width, _ = self.filters.shape
-        stride_h, stride_w = self.stride, self.stride
+        if self.input_shape is None:
+            self.input_shape = inputs.shape
 
-        if self.padding == 'same':
-            pad_h = int(((input_height - 1) * stride_h + kernel_height - input_height) / 2)
-            pad_w = int(((input_width - 1) * stride_w + kernel_width - input_width) / 2)
-            padded_inputs = np.pad(inputs, ((0, 0), (pad_h, pad_h), (pad_w, pad_w), (0, 0)), mode='constant')
-        else:
-            padded_inputs = inputs
+        num_spatial_dims = self._get_num_spatial_dims()
+        self._normalize_params(num_spatial_dims)
+        self._initialize_filters_biases(inputs.shape)
 
-        padded_height, padded_width = padded_inputs.shape[1], padded_inputs.shape[2]
-        output_height = (padded_height - kernel_height) // stride_h + 1
-        output_width = (padded_width - kernel_width) // stride_w + 1
-
-        # im2col transformation
-        input_cols = self._im2col(inputs)  # Shape: (batch_size, kernel_h*kernel_w*in_c, output_h*output_w)
-
-        # Reshape filters for matrix multiplication
-        filter_cols = self.filters.reshape(num_filters, -1).T  # Shape: (kernel_h*kernel_w*in_c, num_filters)
-
-        # Perform convolution as matrix multiplication
-        output_cols = np.einsum('bij,ik->bjk', input_cols, filter_cols) # Shape: (batch_size, output_h*output_w, num_filters)
-
-        # Add biases
-        output_cols += self.biases[None, None, :]
-
-        # Reshape the output back to the original format
-        output = output_cols.reshape(batch_size, output_height, output_width, num_filters)
-
+        # Use im2col approach for efficient convolution
+        batch_size = inputs.shape[0]
+        padded_inputs = self._pad_input_nd(inputs, self.kernel_size, self.stride, self.padding)
+        
+        # Extract patches efficiently
+        patches = self._extract_patches(padded_inputs)
+        
+        # Reshape for efficient matrix multiplication
+        num_patches = np.prod(patches.shape[1:1+num_spatial_dims])
+        patches_reshaped = patches.reshape(batch_size * num_patches, -1)
+        filters_reshaped = self.filters.reshape(self.num_filters, -1)
+        
+        # Perform matrix multiplication
+        output_flat = np.matmul(patches_reshaped, filters_reshaped.T) + self.biases
+        
+        # Reshape to correct output dimensions
+        output_shape = self._get_output_shape(inputs.shape, self.kernel_size, self.stride, self.padding)
+        output = output_flat.reshape(output_shape)
+        
         if self.activation_function:
             self.signals = self.activation_function(output)
             return self.signals
@@ -191,177 +186,145 @@ class Conv2DLayer(ConvolutionalLayer):
 
     def backward(self, grad: np.ndarray) -> np.ndarray:
         inputs = self.inputs
-        batch_size, input_height, input_width, input_channels = inputs.shape
-        num_filters, kernel_height, kernel_width, _ = self.filters.shape
-        _, output_height, output_width, _ = grad.shape
-        stride_h, stride_w = self.stride, self.stride
+        batch_size = inputs.shape[0]
+        in_channels = inputs.shape[-1]
+        num_filters = self.filters.shape[0]
+        num_spatial_dims = self._get_num_spatial_dims()
 
-        # Apply activation derivative if activation function exists
+        # Apply activation derivative if needed
         if self.activation_function:
-            derivative = deriv(self.activation_function, 0, self.signals)
-            grad = grad * derivative
+            derivative_values = deriv(self.activation_function, 'all', self.signals)
+            grad = grad * derivative_values
 
-        # im2col of the input
-        input_cols = self._im2col(inputs) # Shape: (batch_size, kernel_h*kernel_w*in_c, output_h*output_w)
+        # Calculate filter gradients using im2col approach
+        padded_input = self._pad_input_nd(inputs, self.kernel_size, self.stride, self.padding)
+        patches = self._extract_patches(padded_input)
 
-        # Gradient for biases
-        self.d_biases = np.sum(grad, axis=(0, 1, 2)) / batch_size
+        # Reshape patches for matrix multiplication
+        num_patches = np.prod(patches.shape[1:1+num_spatial_dims])
+        patches_reshaped = patches.reshape(batch_size, num_patches, -1)
+        grad_reshaped = grad.reshape(batch_size, num_patches, num_filters)
 
-        # Gradient for filters
-        grad_reshaped = grad.transpose(0, 1, 2, 3).reshape(batch_size, output_height * output_width, num_filters) # Shape: (batch_size, output_h * output_w, num_filters)
-
-        d_filters_unbatched = np.einsum('bpo,bof->fp', input_cols, grad_reshaped)
-        self.d_filters = d_filters_unbatched.reshape(num_filters, kernel_height, kernel_width, input_channels) / batch_size
-
-        # Gradient for the input (Transposed Convolution using im2col)
-        filter_cols_rotated = np.flip(self.filters, axis=(1, 2)).reshape(num_filters, -1) # Shape: (num_filters, kernel_h*kernel_w*in_c)
-        grad_cols = grad.transpose(0, 1, 2, 3).reshape(batch_size, output_height * output_width, num_filters) # Shape: (batch_size, output_h*output_w, num_filters)
-
-        d_input_cols = np.einsum('bop,pf->bof', grad_cols, filter_cols_rotated) # Shape: (batch_size, output_h*output_w, kernel_h*kernel_w*in_c)
-        d_input_cols_reshaped = d_input_cols.reshape(batch_size, output_height, output_width, kernel_height, kernel_width, input_channels)
-
-        d_input_padded = np.zeros_like(inputs)
-        kernel_height, kernel_width = self.kernel_size
-        stride_h, stride_w = self.stride, self.stride
-        if self.padding == 'same':
-            pad_h = int(((input_height - 1) * stride_h + kernel_height - input_height) / 2)
-            pad_w = int(((input_width - 1) * stride_w + kernel_width - input_width) / 2)
-            d_input_padded = np.pad(d_input_padded, ((0, 0), (pad_h, pad_h), (pad_w, pad_w), (0, 0)), mode='constant')
-
-        for b in range(batch_size):
-            for y in range(output_height):
-                for x in range(output_width):
-                    start_y = y * stride_h
-                    end_y = start_y + kernel_height
-                    start_x = x * stride_w
-                    end_x = start_x + kernel_width
-                    d_input_padded[b, start_y:end_y, start_x:end_x, :] += d_input_cols_reshaped[b, y, x, :, :, :]
-
-        if self.padding == 'same':
-            return d_input_padded[:, pad_h:-pad_h, pad_w:-pad_w, :]
-        else:
-            return d_input_padded
-
-    def _col2im(self, col: np.ndarray, input_shape: Tuple[int, int, int, int]) -> np.ndarray:
-        batch_size, input_height, input_width, input_channels = input_shape
-        kernel_height, kernel_width = self.kernel_size
-        stride_h, stride_w = self.stride, self.stride
-
-        if self.padding == 'same':
-            pad_h = int(((input_height - 1) * stride_h + kernel_height - input_height) / 2)
-            pad_w = int(((input_width - 1) * stride_w + kernel_width - input_width) / 2)
-            padded_height, padded_width = input_height + 2 * pad_h, input_width + 2 * pad_w
-        else:
-            padded_height, padded_width = input_height, input_width
-
-        output_height = (padded_height - kernel_height) // stride_h + 1
-        output_width = (padded_width - kernel_width) // stride_w + 1
-
-        d_input_padded = np.zeros((batch_size, padded_height, padded_width, input_channels))
-        col_reshaped = col.reshape(batch_size, output_height, output_width, kernel_height, kernel_width, input_channels).transpose(0, 3, 4, 5, 1, 2)
-
-        for b in range(batch_size):
-            for y in range(output_height):
-                for x in range(output_width):
-                    start_y = y * stride_h
-                    end_y = start_y + kernel_height
-                    start_x = x * stride_w
-                    end_x = start_x + kernel_width
-                    d_input_padded[b, start_y:end_y, start_x:end_x, :] += col_reshaped[b, :, :, :, y, x, :]
-
-        if self.padding == 'same':
-            return d_input_padded[:, pad_h:-pad_h, pad_w:-pad_w, :]
-        else:
-            return d_input_padded
-
-class Conv3DLayer(ConvolutionalLayer):
-    """
-    Performs 3D convolution, used for processing volumetric data like 3D medical scans or video.
-    """
-    def __init__(self, num_filters: int, kernel_size: Union[int, Tuple[int, int, int]], stride: int = 1, padding: str = 'valid', activation_function: Optional[Callable] = None, input_shape: Optional[Tuple[int, int, int, int, int]] = None):
-        super().__init__(num_filters, kernel_size, stride, padding, activation_function, input_shape)
-        self.inputs = None
-        self.signals = None
-
-    def _get_num_spatial_dims(self) -> int:
-        return 3
-
-    def forward(self, inputs: np.ndarray) -> np.ndarray:
-        self._initialize_filters_biases(inputs.shape)
-        self.inputs = inputs
-        batch_size, input_depth, input_height, input_width, input_channels = inputs.shape
-        num_filters, kernel_depth, kernel_height, kernel_width, _ = self.filters.shape
-        stride_d, stride_h, stride_w = self.stride, self.stride, self.stride
-
-        if self.padding == 'same':
-            pad_d = int(((input_depth - 1) * stride_d + kernel_depth - input_depth) / 2)
-            pad_h = int(((input_height - 1) * stride_h + kernel_height - input_height) / 2)
-            pad_w = int(((input_width - 1) * stride_w + kernel_width - input_width) / 2)
-            padded_inputs = np.pad(inputs, ((0, 0), (pad_d, pad_d), (pad_h, pad_h), (pad_w, pad_w), (0, 0)), mode='constant')
-        else:
-            padded_inputs = inputs
-
-        output_depth = (padded_inputs.shape[1] - kernel_depth) // stride_d + 1
-        output_height = (padded_inputs.shape[2] - kernel_height) // stride_h + 1
-        output_width = (padded_inputs.shape[3] - kernel_width) // stride_w + 1
-        output = np.zeros((batch_size, output_depth, output_height, output_width, num_filters))
-
-        for i in range(batch_size):
-            for f in range(num_filters):
-                for id in range(output_depth):
-                    for ih in range(output_height):
-                        for iw in range(output_width):
-                            start_d = id * stride_d
-                            end_d = start_d + kernel_depth
-                            start_h = ih * stride_h
-                            end_h = start_h + kernel_height
-                            start_w = iw * stride_w
-                            end_w = start_w + kernel_width
-                            input_slice = padded_inputs[i, start_d:end_d, start_h:end_h, start_w:end_w, :]
-                            output[i, id, ih, iw, f] = np.sum(input_slice * self.filters[f]) + self.biases[f]
-
-        if self.activation_function:
-            self.signals = self.activation_function(output)
-            return self.signals
-        else:
-            self.signals = output
-            return output
-
-    def backward(self, grad: np.ndarray) -> np.ndarray:
-        inputs = self.inputs
-        batch_size, input_depth, input_height, input_width, input_channels = inputs.shape
-        num_filters, kernel_depth, kernel_height, kernel_width, _ = self.filters.shape
-        stride_d, stride_h, stride_w = self.stride, self.stride, self.stride
-        output_depth, output_height, output_width = grad.shape[1:4]
-
-        # Apply activation derivative
-        if self.activation_function:
-            derivative = deriv(self.activation_function, 0, self.signals)
-            grad = grad * derivative
-
-        # Initialize gradients
+        # Compute filter gradients
         self.d_filters = np.zeros_like(self.filters)
-        self.d_biases = np.sum(grad, axis=(0, 1, 2, 3)) / batch_size
-        d_input = np.zeros_like(inputs)
+        for b in range(batch_size):
+            d_filters_b = np.matmul(grad_reshaped[b].transpose(1, 0), patches_reshaped[b])
+            self.d_filters += d_filters_b.reshape(self.filters.shape) / batch_size
 
-        for i, f, id in itertools.product(range(batch_size), range(num_filters), range(output_depth)):
-            for ih, iw in itertools.product(range(output_height), range(output_width)):
-                start_d = id * stride_d
-                end_d = start_d + kernel_depth
-                start_h = ih * stride_h
-                end_h = start_h + kernel_height
-                start_w = iw * stride_w
-                end_w = start_w + kernel_width
-                input_slice = inputs[i, start_d:end_d, start_h:end_h, start_w:end_w, :]
-                self.d_filters[f] += input_slice * grad[i, id, ih, iw, f]
+        # Compute bias gradients (more efficiently)
+        self.d_biases = np.mean(np.sum(grad, axis=tuple(range(1, grad.ndim-1))), axis=0)
 
-                # Gradient for input
-                grad_slice = grad[i, id, ih, iw, f]
-                for c in range(input_channels):
-                    d_input[i, start_d:end_d, start_h:end_h, start_w:end_w, c] += self.filters[f, :, :, :, c] * grad_slice
+        return self._compute_input_gradient(grad)
 
-        self.d_filters /= batch_size
+    def _compute_input_gradient(self, grad: np.ndarray) -> np.ndarray:
+        """Compute gradient with respect to inputs using transposed convolution"""
+        batch_size = self.inputs.shape[0]
+        input_shape = self.inputs.shape
+        num_spatial_dims = self._get_num_spatial_dims()
+
+        # Handle strides greater than 1 by inserting zeros
+        if any(s > 1 for s in self.stride):
+            grad = self._dilate_gradient(grad)
+
+        # Pad the gradient for full convolution if needed
+        padded_grad = grad
+        if self.padding == 'valid':
+            # For valid padding, we need to pad the gradient
+            pad_width = [(0, 0)]  # No padding for batch dimension
+            pad_width.extend(
+                (self.kernel_size[i] - 1, self.kernel_size[i] - 1)
+                for i in range(num_spatial_dims)
+            )
+            pad_width.append((0, 0))  # No padding for channel dimension
+            padded_grad = np.pad(padded_grad, pad_width, mode='constant')
+
+        # Flip filters for transposed convolution
+        flipped_filters = np.flip(self.filters, axis=tuple(range(1, num_spatial_dims + 1)))
+
+        # Initialize input gradients
+        d_input = np.zeros_like(self.inputs)
+
+        # Compute gradients for each batch and input channel
+        for b, i, f in itertools.product(range(batch_size), range(input_shape[-1]), range(self.filters.shape[0])):
+            # Get the gradient for this filter
+            current_grad = padded_grad[b, ..., f]
+
+            # Get the corresponding filter weights
+            current_filter = flipped_filters[f, ..., i]
+
+                # Compute convolution contribution
+            if num_spatial_dims == 1:
+                result = np.convolve(current_grad, current_filter, mode='valid')
+            elif num_spatial_dims == 2:
+                result = convolve2d(current_grad, current_filter, mode='valid')
+            else:
+                result = convolve(current_grad, current_filter, mode='valid')
+            # Handle shape differences between result and target
+            target_shape = input_shape[1:-1]
+            result_shape = result.shape
+
+            # Create a properly sized array for the result
+            adjusted_result = np.zeros(target_shape)
+
+            slices_result = []
+
+            slices_target = []
+            for dim in range(num_spatial_dims):
+                if result_shape[dim] > target_shape[dim]:
+                    # Need to crop the result
+                    diff = result_shape[dim] - target_shape[dim]
+                    start = diff // 2
+                    end = start + target_shape[dim]
+                    slices_result.append(slice(start, end))
+                    slices_target.append(slice(None))
+                elif result_shape[dim] < target_shape[dim]:
+                    # Need to place the result in a larger array
+                    diff = target_shape[dim] - result_shape[dim]
+                    start = diff // 2
+                    end = start + result_shape[dim]
+                    slices_result.append(slice(None))
+                    slices_target.append(slice(start, end))
+                else:
+                    # Dimensions match
+                    slices_result.append(slice(None))
+                    slices_target.append(slice(None))
+
+            # Place the result in the properly sized array
+            adjusted_result[tuple(slices_target)] = result[tuple(slices_result)]
+
+            # Add to input gradients
+            d_input[b, ..., i] += adjusted_result
+
         return d_input
+
+    def _dilate_gradient(self, grad: np.ndarray) -> np.ndarray:
+        """Insert zeros between gradient values for stride > 1"""
+        batch_size = grad.shape[0]
+        num_filters = grad.shape[-1]
+        num_spatial_dims = self._get_num_spatial_dims()
+        
+        # Calculate dilated gradient shape
+        dilated_spatial_shape = tuple(
+            (grad.shape[d+1] - 1) * self.stride[d] + 1
+            for d in range(num_spatial_dims)
+        )
+        
+        dilated_shape = (batch_size,) + dilated_spatial_shape + (num_filters,)
+        dilated_grad = np.zeros(dilated_shape)
+        
+        # Create slices to insert gradient values at proper positions
+        slices = tuple(
+            slice(0, dilated_spatial_shape[d], self.stride[d])
+            for d in range(num_spatial_dims)
+        )
+        
+        # Insert values
+        for b in range(batch_size):
+            for f in range(num_filters):
+                # Create dynamic indexing
+                dilated_grad[(b,) + slices + (f,)] = grad[b, ..., f]
+        
+        return dilated_grad
 
 class SeparableConv2DLayer(ConvolutionalLayer):
     """
@@ -387,9 +350,7 @@ class SeparableConv2DLayer(ConvolutionalLayer):
             self.pointwise_filters = np.random.randn(self.num_filters, 1, 1, input_channels) * scale_pointwise
             self.biases = np.zeros(self.num_filters)
             if self.optimizer:
-                self.optimizer.register_parameter(self.depthwise_filters, 'depthwise_filters')
-                self.optimizer.register_parameter(self.pointwise_filters, 'pointwise_filters')
-                self.optimizer.register_parameter(self.biases, 'biases')
+                self._reg_params()
 
     def forward(self, inputs: np.ndarray) -> np.ndarray:
         self._initialize_filters_biases(inputs.shape)
@@ -448,7 +409,7 @@ class SeparableConv2DLayer(ConvolutionalLayer):
 
         # Apply activation derivative
         if self.activation_function:
-            derivative = deriv(self.activation_function, 0, self.signals)
+            derivative = deriv(self.activation_function, 'all', self.signals)
             grad = grad * derivative
 
         # Gradient for biases
@@ -489,9 +450,12 @@ class SeparableConv2DLayer(ConvolutionalLayer):
     def _init_optimizer(self, optimizer):
         super()._init_optimizer(optimizer)
         if self.depthwise_filters is not None and self.pointwise_filters is not None and self.biases is not None and self.optimizer is not None:
-            self.optimizer.register_parameter(self.depthwise_filters, 'depthwise_filters')
-            self.optimizer.register_parameter(self.pointwise_filters, 'pointwise_filters')
-            self.optimizer.register_parameter(self.biases, 'biases')
+            self._reg_params()
+
+    def _reg_params(self):
+        self.optimizer.register_parameter(self.depthwise_filters, 'depthwise_filters')
+        self.optimizer.register_parameter(self.pointwise_filters, 'pointwise_filters')
+        self.optimizer.register_parameter(self.biases, 'biases')
 
     def _get_params_and_grads(self) -> List[Tuple[np.ndarray, np.ndarray]]:
         params_and_grads = []
@@ -583,7 +547,7 @@ class DepthwiseConv2DLayer(ConvolutionalLayer):
 
         # Apply activation derivative
         if self.activation_function:
-            derivative = deriv(self.activation_function, 0, self.signals)
+            derivative = deriv(self.activation_function, 'all', self.signals)
             grad = grad * derivative
 
         # Initialize gradients
@@ -673,7 +637,7 @@ class ConvTranspose2DLayer(ConvolutionalLayer):
 
         # Apply activation derivative
         if self.activation_function:
-            derivative = deriv(self.activation_function, 0, self.signals)
+            derivative = deriv(self.activation_function, 'all', self.signals)
             grad = grad * derivative
 
         # Initialize gradients
