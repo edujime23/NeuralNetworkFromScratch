@@ -1,56 +1,39 @@
 import numpy as np
 import itertools
 from typing import Optional, Tuple, Callable, List, Self
-from multiprocessing import Pool, cpu_count, set_start_method
-
-class Neuron:
-    def __init__(self, num_inputs: int, activation_function: Callable[[np.float64], np.float64]):
-        self.delta: np.float64 = np.float64(0)
-        self.weights: np.ndarray = np.random.randn(num_inputs).astype(np.float64) * np.sqrt(2.0 / num_inputs)
-        self.bias: np.float64 = np.random.randn(1)[0] * np.sqrt(2.0 / num_inputs)
-        self.signal: np.float64 = np.float64(0)
-        self.activation_function = activation_function
-
-    def activate(self, inputs: np.ndarray, threshold: np.float64) -> None:
-        signal_sum: np.float64 = self.bias + np.dot(self.weights, inputs.astype(np.float64))  
-        self.signal = self.activation_function(signal_sum / threshold)  
+from multiprocessing import Pool, cpu_count
 
 class Layer:
     def __init__(self, num_neurons: int, num_inputs: int, activation_function: Optional[Callable[[np.float64], np.float64]]):
-        self.neurons: List[Neuron] = [Neuron(num_inputs, activation_function) for _ in range(num_neurons)]  
-        self.activation_function = activation_function  
-        self.num_neurons = num_neurons  
-        self.num_inputs = num_inputs  
+        self.weights = np.random.randn(num_neurons, num_inputs).astype(np.float64) * np.sqrt(2.0 / num_inputs)
+        self.biases = np.random.randn(num_neurons).astype(np.float64) * np.sqrt(2.0 / num_inputs)
+        self.activation_function = activation_function or (lambda x: x)
+        self.num_neurons = num_neurons
+
+    def activate(self, inputs: np.ndarray, threshold: np.float64) -> np.ndarray:
+        net_inputs = np.matmul(self.weights, inputs) + self.biases  # Vectorized computation
+        return self.activation_function(net_inputs / threshold)  
 
 class EvolutionaryNeuralNetwork:
     def sigmoid(self, x: np.float64) -> np.float64:
         return np.float64(1) / (np.float64(1) + np.exp(-np.clip(x, -500, 500)))
 
-    def error(self, outputs: List[np.float64], expected: List[np.float64]) -> np.float64:
-        outputs = np.array(outputs, dtype=np.float64)
-        expected = np.array(expected, dtype=np.float64)
-        return np.sum((outputs - expected)**2)
+    def error(self, outputs: np.ndarray, expected: np.ndarray) -> np.float64:
+        return np.sum((outputs - expected) ** 2)
     
     def derivative(self, activation: Callable[[np.float64], np.float64], x: np.float64, *, dx: np.float64 = np.float64(10e-8)) -> np.float64:
         a1 = activation(x + dx)
         a2 = activation(x)
         return (a1 - a2) / dx
 
-    def __init__(self, 
-                 input_size: int, 
-                 hidden_size: Tuple[int, ...], 
-                 output_size: int, 
-                 threshold: float,
+    def __init__(self, input_size: int, hidden_size: Tuple[int, ...], output_size: int, threshold: float,
                  activation_functions: Optional[Tuple[Callable[[np.float64], np.float64], ...]] = None,
-                 cost_function: Optional[Callable[[List[np.float64], List[np.float64]], np.float64]] = None):
-        if not isinstance(hidden_size, tuple):
-            raise TypeError("hidden_size must be a tuple of ints")
-        if not all(isinstance(x, int) for x in hidden_size):
-            raise TypeError("All elements in hidden_size must be ints")
-        if not isinstance(input_size, int) or not isinstance(output_size, int):
-            raise TypeError("input_size and output_size must be ints")
-        if input_size <= 0 or output_size <= 0 or any(x <= 0 for x in hidden_size):
-            raise ValueError("input_size, output_size, and all elements in hidden_size must be positive integers")
+                 cost_function: Optional[Callable[[np.ndarray, np.ndarray], np.float64]] = None):
+        self.input_size = input_size
+        self.hidden_size = hidden_size
+        self.output_size = output_size
+        self.threshold = np.float64(threshold)
+        self.cost = cost_function or self.error
 
         if activation_functions is not None:
             activation_functions = tuple(self.sigmoid if func is None else func for func in activation_functions)
@@ -58,35 +41,18 @@ class EvolutionaryNeuralNetwork:
         else:
             self.activation_functions = itertools.cycle([self.sigmoid])
 
-        if cost_function is not None and not callable(cost_function):
-            raise TypeError("cost_function must be callable")
-        self.cost = cost_function or self.error
-
-        self.input_size = input_size
-        self.hidden_size = hidden_size
-        self.output_size = output_size
-        self.threshold = np.float64(threshold)
-
-        self.layers: List[Layer] = [Layer(self.input_size, self.input_size, None)]
+        self.layers: List[Layer] = []
+        sizes = [self.input_size] + list(self.hidden_size) + [self.output_size]
         self.layers.extend(
-            Layer(
-                self.hidden_size[i],
-                self.hidden_size[i - 1] if i > 0 else self.input_size,
-                next(self.activation_functions),
-            )
-            for i in range(len(self.hidden_size))
+            Layer(sizes[i + 1], sizes[i], next(self.activation_functions))
+            for i in range(len(sizes) - 1)
         )
-        self.layers.append(Layer(self.output_size, self.hidden_size[-1] if self.hidden_size else self.input_size, next(self.activation_functions)))
     
-    def activate(self, inputs: Tuple[float]) -> List[np.float64]:
+    def activate(self, inputs: Tuple[float]) -> np.ndarray:
         inputs = np.array(inputs, dtype=np.float64)
-        for i in range(len(inputs)):
-            self.layers[0].neurons[i].signal = inputs[i]
-        for i in range(1, len(self.layers)):
-            prev_signals = np.array([neuron.signal for neuron in self.layers[i-1].neurons], dtype=np.float64)
-            for neuron in self.layers[i].neurons:
-                neuron.activate(prev_signals, self.threshold)
-        return [neuron.signal for neuron in self.layers[-1].neurons]
+        for layer in self.layers:
+            inputs = layer.activate(inputs, self.threshold)  # Fully vectorized forward pass
+        return inputs
 
     def clone(self) -> Self:
         cloned = EvolutionaryNeuralNetwork(
@@ -98,29 +64,28 @@ class EvolutionaryNeuralNetwork:
             cost_function=self.cost
         )
         for layer_self, layer_clone in zip(self.layers, cloned.layers):
-            for neuron_self, neuron_clone in zip(layer_self.neurons, layer_clone.neurons):
-                neuron_clone.weights = np.copy(neuron_self.weights)
-                neuron_clone.bias = neuron_self.bias
+            layer_clone.weights = np.copy(layer_self.weights)
+            layer_clone.biases = np.copy(layer_self.biases)
         return cloned
+
     
     def crossover(self, parent2: Self) -> Self:
         """Create a child network by combining properties of two parent networks."""
         child = self.clone()
 
-        # Randomly choose which parent's weights to take
+        # Randomly choose which parent's weights and biases to take
         for i in range(len(self.layers)):
-            for j in range(len(self.layers[i].neurons)):
-                parent1_neuron = self.layers[i].neurons[j]
-                parent2_neuron = parent2.layers[i].neurons[j]
-                child_neuron = child.layers[i].neurons[j]
+            layer1 = self.layers[i]
+            layer2 = parent2.layers[i]
+            child_layer = child.layers[i]
 
-                # Perform crossover on weights and biases
-                crossover_point = np.random.randint(0, len(parent1_neuron.weights))
-                child_neuron.weights[:crossover_point] = parent1_neuron.weights[:crossover_point]
-                child_neuron.weights[crossover_point:] = parent2_neuron.weights[crossover_point:]
+            # Perform crossover on weights
+            crossover_point = np.random.randint(0, layer1.weights.shape[1])
+            child_layer.weights[:,:crossover_point] = layer1.weights[:,:crossover_point]
+            child_layer.weights[:,crossover_point:] = layer2.weights[:,crossover_point:]
 
-                # You can similarly crossover biases if desired
-                child_neuron.bias = np.random.choice([parent1_neuron.bias, parent2_neuron.bias])
+            # Perform crossover on biases (you can modify this logic if you want more control)
+            child_layer.biases = layer1.biases if np.random.choice([0,1]) else layer2.biases
 
         return child
     
@@ -130,18 +95,23 @@ class EvolutionaryNeuralNetwork:
         Each parameter has a chance of mutation_rate to be adjusted by a small Gaussian noise.
         """
         for layer in self.layers:
-            for neuron in layer.neurons:
-                for i in range(len(neuron.weights)):
+            # Mutate weights
+            for i in range(layer.weights.shape[0]):  # Iterate over neurons
+                for j in range(layer.weights.shape[1]):  # Iterate over inputs to neurons
                     if np.random.rand() < mutation_rate:
-                        neuron.weights[i] += np.random.normal(0, mutation_strength) * learning_rate
+                        layer.weights[i, j] += np.random.normal(0, mutation_strength) * learning_rate
+
+            # Mutate biases
+            for i in range(layer.biases.shape[0]):  # Iterate over biases
                 if np.random.rand() < mutation_rate:
-                    neuron.bias += np.random.normal(0, mutation_strength) * learning_rate
+                    layer.biases[i] += np.random.normal(0, mutation_strength) * learning_rate
 
     def copy_from(self, other: Self) -> None:
         for self_layer, other_layer in zip(self.layers, other.layers):
-            for self_neuron, other_neuron in zip(self_layer.neurons, other_layer.neurons):
-                self_neuron.weights = np.copy(other_neuron.weights)
-                self_neuron.bias = other_neuron.bias
+            # Copy weights and biases directly
+            self_layer.weights = np.copy(other_layer.weights)
+            self_layer.biases = np.copy(other_layer.biases)
+
 
     def evaluate_fitness(self, 
                          inputs: List[Tuple[float, ...]], 
