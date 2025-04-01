@@ -20,11 +20,6 @@ class EvolutionaryNeuralNetwork:
 
     def error(self, outputs: np.ndarray, expected: np.ndarray) -> np.float64:
         return np.sum((outputs - expected) ** 2)
-    
-    def derivative(self, activation: Callable[[np.float64], np.float64], x: np.float64, *, dx: np.float64 = np.float64(10e-8)) -> np.float64:
-        a1 = activation(x + dx)
-        a2 = activation(x)
-        return (a1 - a2) / dx
 
     def __init__(self, input_size: int, hidden_size: Tuple[int, ...], output_size: int, threshold: float,
                  activation_functions: Optional[Tuple[Callable[[np.float64], np.float64], ...]] = None,
