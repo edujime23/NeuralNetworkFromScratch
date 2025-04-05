@@ -84,8 +84,8 @@ class SimpleRNNLayer(RecurrentLayer):
             d_h_raw = d_h * activation_derivative
             
             # Using einsum for weight gradients
-            self.dWh += np.einsum('ij,ik->jk', hidden_prev, d_h_raw)
-            self.dWx += np.einsum('ij,ik->jk', input_t, d_h_raw)
+            self.dWh += hidden_prev @ d_h_raw
+            self.dWx += input_t @ d_h_raw
             
             # Bias gradient - sum across batch dimension
             self.db += np.sum(d_h_raw, axis=0)
@@ -124,7 +124,7 @@ class LSTMLayer(RecurrentLayer):
     """
     Long Short-Term Memory (LSTM) layer.
     """
-    def __init__(self, units: int, return_sequences: bool = False, trainable: bool = True):
+    def __init__(self, units: int, return_sequences: bool = True, trainable: bool = True):
         super().__init__(units, return_sequences=return_sequences, trainable=trainable)
         self.Wf = None  # Weights for forget gate (input to hidden)
         self.Wi = None  # Weights for input gate (input to hidden)
@@ -194,7 +194,7 @@ class LSTMLayer(RecurrentLayer):
 
         # Initialize hidden state and cell state
         self.hidden_state = np.zeros((input_shape[0], self.units))  # Initialize hidden state
-        self.cell_state = np.zeros((input_shape[0], self.units))     # Initialize cell state
+        self.cell_state = np.zeros((input_shape[0], self.units))    # Initialize cell state
 
         if self.optimizer:
             self._reg_params()
@@ -212,7 +212,7 @@ class LSTMLayer(RecurrentLayer):
         self.optimizer.register_parameter(self.bi, 'bi')
         self.optimizer.register_parameter(self.bo, 'bo')
         self.optimizer.register_parameter(self.bc, 'bc')
-        
+
     def update(self):
         if self.optimizer and self.trainable:
             self.Wf = self.optimizer.update(self.Wf, self.dWf, 'Wf')
@@ -239,74 +239,98 @@ class LSTMLayer(RecurrentLayer):
             self.dbf = np.zeros_like(self.bf)
             self.dbi = np.zeros_like(self.bi)
             self.dbo = np.zeros_like(self.bo)
-            self.dbc = np.zeros_like(self.dbc)
-            
+            self.dbc = np.zeros_like(self.bc)
+
     def forward(self, inputs: np.ndarray) -> np.ndarray:
         self.inputs = inputs
         batch_size, time_steps, input_dim = inputs.shape
         self.outputs = np.zeros((batch_size, time_steps, self.units)) if self.return_sequences else np.zeros((batch_size, self.units))
         self.hidden_state = np.zeros((batch_size, self.units)) # Initialize hidden state for the batch
-        self.cell_state = np.zeros((batch_size, self.units))   # Initialize cell state for the batch
+        self.cell_state = np.zeros((batch_size, self.units))    # Initialize cell state for the batch
+
+        input_gate_outputs = []
+        forget_gate_outputs = []
+        output_gate_outputs = []
+        cell_state_candidates = []
+        cell_states_sequence = []
+        hidden_states_sequence = []
+
         for t in range(time_steps):
             input_at_t = inputs[:, t, :]
             output_at_t = self._step(input_at_t)
             if self.return_sequences:
                 self.outputs[:, t, :] = output_at_t
+                input_gate_outputs.append(self._current_input_gate_output)
+                forget_gate_outputs.append(self._current_forget_gate_output)
+                output_gate_outputs.append(self._current_output_gate_output)
+                cell_state_candidates.append(self._current_cell_state_candidate)
+                cell_states_sequence.append(self.cell_state.copy())
+                hidden_states_sequence.append(self.hidden_state.copy())
             else:
                 self.outputs = output_at_t
+                self._last_input_gate_output = self._current_input_gate_output
+                self._last_forget_gate_output = self._current_forget_gate_output
+                self._last_output_gate_output = self._current_output_gate_output
+                self._last_cell_state_candidate = self._current_cell_state_candidate
+                self._last_cell_state = self.cell_state.copy()
+                self._last_hidden_state = self.hidden_state.copy()
+
+        if self.return_sequences:
+            self.input_gate_output = np.array(input_gate_outputs).transpose((1, 0, 2))
+            self.forget_gate_output = np.array(forget_gate_outputs).transpose((1, 0, 2))
+            self.output_gate_output = np.array(output_gate_outputs).transpose((1, 0, 2))
+            self.cell_state_candidate = np.array(cell_state_candidates).transpose((1, 0, 2))
+            self.cell_states = np.array(cell_states_sequence).transpose((1, 0, 2))
+            self.hidden_states = np.array(hidden_states_sequence).transpose((1, 0, 2))
+        else:
+            self.input_gate_output = self._last_input_gate_output
+            self.forget_gate_output = self._last_forget_gate_output
+            self.output_gate_output = self._last_output_gate_output
+            self.cell_state_candidate = self._last_cell_state_candidate
+            self.cell_state = self._last_cell_state
+            self.hidden_state = self._last_hidden_state
         return self.outputs
 
     def _step(self, input_at_t: np.ndarray) -> np.ndarray:
         if self.Wf is None:
             self._initialize_weights(self.inputs.shape)
-        
+
         self.last_input = input_at_t
         self.prev_cell_state = self.cell_state.copy()
-        
+
         # Combine all gate computations using a single matrix multiplication
-        # Concatenate weights and biases for efficiency
-        # [Wf, Wi, Wc, Wo] and [Uf, Ui, Uc, Uo]
-        
-        # Input projections (batch_size x hidden_size*4)
         input_projection = input_at_t @ np.hstack((self.Wf, self.Wi, self.Wc, self.Wo))
-        
-        # Hidden projections (batch_size x hidden_size*4)
         hidden_projection = self.hidden_state @ np.hstack((self.Uf, self.Ui, self.Uc, self.Uo))
-        
-        # Add biases
         all_gates = input_projection + hidden_projection + np.hstack((self.bf, self.bi, self.bc, self.bo))
-        
-        # Split the gates
+
         h_size = self.hidden_state.shape[1]
         forget_gate_input = all_gates[:, :h_size]
         input_gate_input = all_gates[:, h_size:2*h_size]
         cell_state_candidate_input = all_gates[:, 2*h_size:3*h_size]
         output_gate_input = all_gates[:, 3*h_size:]
-        
+
         # Activate the gates
-        self.forget_gate_output = ActivationFunctions.sigmoid(forget_gate_input)
-        self.input_gate_output = ActivationFunctions.sigmoid(input_gate_input)
-        self.cell_state_candidate = np.tanh(cell_state_candidate_input)
-        self.output_gate_output = ActivationFunctions.sigmoid(output_gate_input)
-        
+        self._current_forget_gate_output = ActivationFunctions.sigmoid(forget_gate_input)
+        self._current_input_gate_output = ActivationFunctions.sigmoid(input_gate_input)
+        self._current_cell_state_candidate = np.tanh(cell_state_candidate_input)
+        self._current_output_gate_output = ActivationFunctions.sigmoid(output_gate_input)
+
         # Update cell state with element-wise operations
-        self.cell_state = self.forget_gate_output * self.cell_state + self.input_gate_output * self.cell_state_candidate
-        
+        self.cell_state = self._current_forget_gate_output * self.cell_state + self._current_input_gate_output * self._current_cell_state_candidate
+
         # Update hidden state
-        self.hidden_state = self.output_gate_output * np.tanh(self.cell_state)
-        
+        self.hidden_state = self._current_output_gate_output * np.tanh(self.cell_state)
+
         return self.hidden_state
 
     def backward(self, grad: np.ndarray) -> np.ndarray:
         if self.Wf is None:
             return np.zeros_like(self.inputs)
 
-        d_input = np.zeros_like(self.inputs)
         batch_size, time_steps, input_dim = self.inputs.shape
-        d_hidden_next = np.zeros_like(self.hidden_state)
-        d_cell_next = np.zeros_like(self.cell_state)
+        d_input = np.zeros_like(self.inputs)
 
-        # Initialize gradients (already done in __init__, but ensuring)
+        # Initialize gradients
         self.dWf = np.zeros_like(self.Wf)
         self.dWi = np.zeros_like(self.Wi)
         self.dWo = np.zeros_like(self.Wo)
@@ -320,20 +344,22 @@ class LSTMLayer(RecurrentLayer):
         self.dbo = np.zeros_like(self.bo)
         self.dbc = np.zeros_like(self.bc)
 
-        for t in reversed(range(time_steps)):
-            input_t = self.inputs[:, t, :]
-            hidden_prev = self.outputs[:, t - 1, :] if t > 0 and self.return_sequences else np.zeros((batch_size, self.units))
-            cell_prev = self.prev_cell_state if t > 0 else np.zeros((batch_size, self.units))
+        d_hidden_next = np.zeros((batch_size, self.units))
+        d_cell_next = np.zeros((batch_size, self.units))
 
-            # Get activations at this time step
+        for t in range(time_steps, 0):
+            input_t = self.inputs[:, t, :]
+            hidden_prev = self.hidden_states[:, t - 1, :] if t > 0 and self.return_sequences else np.zeros((batch_size, self.units))
+            cell_prev = self.cell_states[:, t - 1, :] if t > 0 and self.return_sequences else np.zeros((batch_size, self.units))
+
             ft = self.forget_gate_output[:, t, :] if self.return_sequences else self.forget_gate_output
             it = self.input_gate_output[:, t, :] if self.return_sequences else self.input_gate_output
             ot = self.output_gate_output[:, t, :] if self.return_sequences else self.output_gate_output
             ct_candidate = self.cell_state_candidate[:, t, :] if self.return_sequences else self.cell_state_candidate
-            ct = self.cell_state[:, t, :] if self.return_sequences else self.cell_state
-            ht = self.hidden_state[:, t, :] if self.return_sequences else self.hidden_state
+            ct = self.cell_states[:, t, :] if self.return_sequences else self.cell_state
+            ht = self.hidden_states[:, t, :] if self.return_sequences else self.hidden_state
 
-            # Gradient from output
+            # Gradient from output (and next hidden state)
             dht = grad[:, t, :] + d_hidden_next if self.return_sequences else grad + d_hidden_next
 
             # Gradient for output gate
@@ -344,11 +370,11 @@ class LSTMLayer(RecurrentLayer):
             self.dbo += np.sum(doutput_gate_input, axis=0)
 
             # Gradient for cell state
-            dct = dht * ot * derivative(np.tanh, 'all', ct) + d_cell_next
+            dct = dht * ot * derivative(ActivationFunctions.tanh, 'all', ct) + d_cell_next
 
             # Gradient for candidate cell state
             dct_candidate = dct * it
-            dcell_state_candidate_input = dct_candidate * derivative(np.tanh, 'all', np.matmul(input_t, self.Wc) + np.matmul(hidden_prev, self.Uc) + self.bc)
+            dcell_state_candidate_input = dct_candidate * derivative(ActivationFunctions.tanh, 'all', np.matmul(input_t, self.Wc) + np.matmul(hidden_prev, self.Uc) + self.bc)
             self.dWc += np.matmul(input_t.T, dcell_state_candidate_input)
             self.dUc += np.matmul(hidden_prev.T, dcell_state_candidate_input)
             self.dbc += np.sum(dcell_state_candidate_input, axis=0)
@@ -376,9 +402,9 @@ class LSTMLayer(RecurrentLayer):
 
             # Gradient for previous hidden state
             d_hidden_prev = (np.matmul(dforget_gate_input, self.Uf.T) +
-                             np.matmul(dinput_gate_input, self.Ui.T) +
-                             np.matmul(dcell_state_candidate_input, self.Uc.T) +
-                             np.matmul(doutput_gate_input, self.Uo.T))
+                              np.matmul(dinput_gate_input, self.Ui.T) +
+                              np.matmul(dcell_state_candidate_input, self.Uc.T) +
+                              np.matmul(doutput_gate_input, self.Uo.T))
             d_hidden_next = d_hidden_prev
             d_cell_next = dct * ft
 

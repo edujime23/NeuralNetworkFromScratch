@@ -135,7 +135,7 @@ class NeuralNetwork:
 
         # Add regularization penalties to the loss
         loss_value += self.l1_lambda * l1_penalty
-        loss_value += self.l2_lambda * l2_penalty * 0.5  # Multiply L2 by 0.5 for easier derivative
+        loss_value += self.l2_lambda * l2_penalty
 
         self._trigger_callbacks(self.callbacks, 'on_batch_loss', loss=loss_value)
         self._backward_pass(y)

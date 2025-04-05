@@ -25,21 +25,18 @@ class MaxPoolingLayer(PoolingLayer):
         output = np.zeros((batch_size, output_height, output_width, num_channels), dtype=np.float64)
         self.max_indices = np.zeros_like(inputs, dtype=bool)
 
-        for b in range(batch_size):
-            for c in range(num_channels):
-                for i in range(output_height):
-                    for j in range(output_width):
-                        start_h = i * sh
-                        end_h = start_h + kh
-                        start_w = j * sw
-                        end_w = start_w + kw
-                        pool_region = inputs[b, start_h:end_h, start_w:end_w, c]
-                        max_val = np.max(pool_region)
-                        output[b, i, j, c] = max_val
-                        max_index_in_region = np.argmax(pool_region)
-                        index_h = start_h + max_index_in_region // kw
-                        index_w = start_w + max_index_in_region % kw
-                        self.max_indices[b, index_h, index_w, c] = True
+        for b, c, i, j in itertools.product(range(batch_size), range(num_channels), range(output_height), range(output_width)):
+            start_h = i * sh
+            end_h = start_h + kh
+            start_w = j * sw
+            end_w = start_w + kw
+            pool_region = inputs[b, start_h:end_h, start_w:end_w, c]
+            max_val = np.max(pool_region)
+            output[b, i, j, c] = max_val
+            max_index_in_region = np.argmax(pool_region)
+            index_h = start_h + max_index_in_region // kw
+            index_w = start_w + max_index_in_region % kw
+            self.max_indices[b, index_h, index_w, c] = True
         return output
 
     def backward(self, grad: np.ndarray) -> np.ndarray:

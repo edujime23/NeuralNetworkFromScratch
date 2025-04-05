@@ -1,75 +1,168 @@
+import contextlib
+
+import scipy.fft
+import scipy.optimize
+import scipy.signal
 from utils.functions import CostFunctions, ActivationFunctions
+import scipy
 from utils.optimizer import *
-from layer import *
+from inspect import signature
+from layer import DenseLayer
 from neuralNetwork import NeuralNetwork
 from utils.callbacks import Callback
 import numpy as np
 import matplotlib.pyplot as plt
+import multiprocessing as mp
+import time
+import queue
 
-class back(Callback):
+class LossCallback(Callback):
     def on_epoch_end(self, epoch, logs=None):
-        if epoch % 10 == 0: print(f"Epoch {epoch+1}, Loss: {logs['loss']:.4f}, Val Loss: {logs.get('val_loss', 'N/A'):.4f}")
+        if epoch % 100 == 0:
+            print(f"Epoch {epoch+1}, Loss: {logs['loss']:.4f}, Val Loss: {logs.get('val_loss', 'N/A')}")
 
-# Generate XOR training data
-num_samples = 4000
-inputs = np.random.randint(0, 2, size=(num_samples, 2)).astype(np.float32)
-outputs = np.logical_xor(inputs[:, 0], inputs[:, 1]).astype(np.float32).reshape(-1, 1)
+def plot_process(plot_queue, inputs, target_func, train_inputs, train_outputs):
+    plt.ion()
+    fig, ax = plt.subplots(figsize=(10, 6))
+    line_objective, = ax.plot(inputs, target_func(inputs), label='Objective Function (func())', color='blue')
+    scatter_train = ax.scatter(train_inputs, train_outputs, label='Training Data', s=10, color='green', alpha=0.5)
+    line_predictions, = ax.plot(inputs, np.zeros_like(inputs), label='Neural Network Predictions', color='red', linestyle='--', linewidth=2)
+    ax.set_xlabel('x')
+    ax.set_ylabel('y')
+    ax.set_title('Approximation of the funky function')
+    ax.legend()
+    ax.grid(True)
+    
+    plt.show(block=False)
+    
+    last_update_time = time.time()
+    update_interval = 1/120  # Seconds between visual updates to prevent excessive redrawing
+    
+    while True:
+        try:
+            # Non-blocking queue get with short timeout
+            predictions = plot_queue.get(timeout=1/120)
+            if predictions is None:  # Signal to stop
+                break
+                
+            current_time = time.time()
+            if current_time - last_update_time > update_interval:
+                line_predictions.set_ydata(predictions)
+                fig.canvas.draw_idle()  # More efficient than draw()
+                fig.canvas.flush_events()
+                last_update_time = current_time
+                
+        except queue.Empty:
+            # No new data, just update the plot if needed
+            plt.pause(1/120)  # Small pause to allow GUI events to process
+        except Exception as e:
+            print(f"Error in plot process: {e}")
+            break
+    
+    plt.close()
 
-# Shuffle the training data
-indices = np.arange(inputs.shape[0])
-np.random.shuffle(indices)
-inputs = inputs[indices]
-outputs = outputs[indices]
+class LivePlotCallback(Callback):
+    def __init__(self, plot_queue, inputs, model, update_frequency=10):
+        self.plot_queue = plot_queue
+        self.inputs = inputs
+        self.model = model
+        self.update_frequency = update_frequency
+        self.last_put_time = 0
+        
+    def on_epoch_end(self, epoch, logs=None):
+        if epoch % self.update_frequency == 0:
+            current_time = time.time()
+            # Only update if queue isn't full and enough time has passed
+            with contextlib.suppress(queue.Full):
+                predictions = self.model.predict(self.inputs)
+                # Use put_nowait to avoid blocking if queue is full
+                self.plot_queue.put_nowait(predictions)
+                self.last_put_time = current_time
 
-# Generate XOR validation data
-num_val_samples = 400
-validation_inputs = np.random.randint(0, 2, size=(num_val_samples, 2)).astype(np.float32)
-validation_outputs = np.logical_xor(validation_inputs[:, 0], validation_inputs[:, 1]).astype(np.float32).reshape(-1, 1)
+def func(x):
+    return x**2 * np.sin(x) ** 2
 
-# Create a simple neural network with only dense layers for XOR
-layers = [
-    DenseLayer(5, num_inputs=2, activation_function=ActivationFunctions.leaky_relu),
-    DenseLayer(1, num_inputs=5, activation_function=ActivationFunctions.sigmoid)
-]
-nn = NeuralNetwork(layers, CostFunctions.mean_squared_error, l1_lambda=1e-5, l2_lambda=1e-4)
-nn.compile(optimizer=AdamOptimizer(learning_rate=1e-4, weight_decay=1e-2))
-
-# Train the network
-nn.fit(inputs, outputs, epochs=1000, batch_size=16, validation_data=(validation_inputs, validation_outputs), callbacks=[back()], restore_best_weights=True)
-
-# Print initial predictions on a few training samples
-print("Initial Predictions (untrained network):")
-for i in range(5):
-    prediction = nn.predict(inputs[i].reshape(1, 2))
-    print(f"Input: {inputs[i]}, Predicted output: {prediction[0, 0]:.4f}, True label: {outputs[i, 0]:.1f}")
-
-# Test the trained network
-print("\nTesting trained network:")
-test_inputs = np.array([[0, 0], [0, 1], [1, 0], [1, 1]], dtype=np.float32)
-true_outputs = np.array([[0], [1], [1], [0]], dtype=np.float32)
-
-for i in range(len(test_inputs)):
-    prediction = nn.predict(test_inputs[i].reshape(1, 2))
-    predicted_output = 1 if prediction[0, 0] > 0.5 else 0
-    print(f"Input: {test_inputs[i]}, Predicted: {predicted_output}, True: {int(true_outputs[i, 0])}, Probability: {prediction[0, 0]:.4f}")
-
-# Visualize the decision boundary (optional for 2D input)
-h = 0.01
-x_min, x_max = inputs[:, 0].min() - 0.1, inputs[:, 0].max() + 0.1
-y_min, y_max = inputs[:, 1].min() - 0.1, inputs[:, 1].max() + 0.1
-xx, yy = np.meshgrid(np.arange(x_min, x_max, h),
-                     np.arange(y_min, y_max, h))
-Z = nn.predict(np.c_[xx.ravel(), yy.ravel()])
-Z = (Z > 0.5).reshape(xx.shape)
-plt.contourf(xx, yy, Z, cmap=plt.cm.RdBu, alpha=0.8)
-
-# Plot the training data points
-plt.scatter(inputs[:, 0], inputs[:, 1], c=outputs[:, 0], cmap=plt.cm.RdBu, edgecolors='k')
-plt.title('XOR Decision Boundary')
-plt.xlabel('Input 1')
-plt.ylabel('Input 2')
-plt.xlim(xx.min(), xx.max())
-plt.ylim(yy.min(), yy.max())
-plt.xticks([0, 1])
-plt.yticks([0, 1])
-plt.show()
+if __name__ == "__main__":
+    # Using context manager to ensure clean process termination
+    mp.set_start_method('spawn', force=True)  # More stable for GUI applications
+    
+    num_samples = 5000
+    inputs = np.linspace(0, 10, num_samples).reshape(-1, 1)
+    outputs = func(inputs)
+    
+    input_dims = signature(func).parameters.__len__()
+    out_dims = np.array(func(*np.random.randn(input_dims))).size
+    
+    train_inputs = inputs
+    train_outputs = outputs
+    
+    layers = [
+        DenseLayer(64, activation_function=ActivationFunctions.leaky_relu) for _ in range(4)
+    ]
+    
+    layers.append(DenseLayer(out_dims, activation_function=ActivationFunctions.linear))
+    
+    adam = AdamOptimizer(learning_rate=1e-4, 
+                        weight_decay=0, 
+                        use_adamw=True, 
+                        amsgrad=True, 
+                        gradient_clip=None,
+                        noise_factor=1e-4,
+                        cyclical_lr=True,
+                        lr_max_factor=4, 
+                        lr_cycle_steps=10
+    )
+    sgd = SGD(learning_rate=1e-3, momentum=1e-2, nesterov=True)
+    
+    nn = NeuralNetwork(layers, CostFunctions.huber_loss, gradient_clip=None, l1_lambda=0, l2_lambda=0)
+    nn.compile(optimizer=adam)
+    
+    # Create a multiprocessing Queue with limited size to avoid memory issues
+    plot_queue = mp.Queue()  # Only keep latest few predictions
+    
+    # Instantiate the LivePlotCallback with the queue
+    live_plot_callback = LivePlotCallback(plot_queue, inputs, nn, update_frequency=1)
+    loss_callback = LossCallback()
+    
+    # Create and start the plotting process
+    plot_process_instance = mp.Process(
+        target=plot_process, 
+        args=(plot_queue, inputs, func, train_inputs, train_outputs)
+    )
+    plot_process_instance.daemon = True  # Automatically terminate if main process ends
+    plot_process_instance.start()
+    
+    try:
+        nn.fit(
+            train_inputs, 
+            train_outputs, 
+            epochs=2**64, 
+            batch_size=num_samples//256, 
+            callbacks=[loss_callback, live_plot_callback], 
+            restore_best_weights=True
+        )
+    except KeyboardInterrupt:
+        print("\nTraining interrupted by user")
+    finally:
+        # Send a signal to the plotting process to stop
+        try:
+            plot_queue.put_nowait(None)
+        except queue.Full:
+            # If queue is full, try to empty it first
+            while not plot_queue.empty():
+                try:
+                    plot_queue.get_nowait()
+                except queue.Empty:
+                    break
+            plot_queue.put(None)
+        
+        # Wait for the plotting process to finish with timeout
+        plot_process_instance.join(timeout=1.0)
+        
+        # If process is still alive, terminate it
+        if plot_process_instance.is_alive():
+            plot_process_instance.terminate()
+            plot_process_instance.join()
+            plot_process_instance.close()
+            
+        print("Training completed.")
