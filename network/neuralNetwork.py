@@ -4,9 +4,9 @@ from typing import List, Optional, Callable, Tuple, Type
 from .utils.functions import *
 from .layer import *
 from .utils.loss import Loss
-from .utils.optimizer import Optimizer  # Import the base Optimizer class
+from .utils.optimizer import Optimizer
 from .utils.callbacks import Callback
-from .utils.metrics import Metrics # Assuming metrics are in utils/metrics.py
+from .utils.metrics import Metrics
 
 # Neural Network class
 class NeuralNetwork:
