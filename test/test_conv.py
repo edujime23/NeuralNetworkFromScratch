@@ -2,8 +2,8 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from network.utils.functions import CostFunctions, ActivationFunctions
-from network.utils.optimizer import *
+from network.functions import *
+from network.optimizer import *
 from network.layer import *
 from network.neuralNetwork import NeuralNetwork
 from network.utils.callbacks import Callback
@@ -34,15 +34,15 @@ outputs_2d = np.random.randint(0, 2, (batch_size, 1)).astype(np.float32)  # Bina
 # Create a simple ConvNet
 layers_2d = [
     ConvNDLayer(num_filters=16, kernel_size=(3, 3), stride=1,
-                activation_function=ActivationFunctions.relu),
+                activation_function=relu),
     ConvNDLayer(num_filters=32, kernel_size=(3, 3), stride=2,
-                activation_function=ActivationFunctions.relu),
+                activation_function=relu),
     FlattenLayer(),
-    DenseLayer(1, activation_function=ActivationFunctions.sigmoid)
+    DenseLayer(1, activation_function=sigmoid)
 ]
 
-nn_2d = NeuralNetwork(layers_2d, CostFunctions.cross_entropy)
-nn_2d.compile(optimizer=AdamOptimizer(learning_rate=0.001))
+nn_2d = NeuralNetwork(layers_2d, cross_entropy)
+nn_2d.compile(optimizer=AdamW(learning_rate=0.001))
 
 # Train the network
 nn_2d.fit(inputs_2d, outputs_2d, epochs=5, batch_size=16,
@@ -60,15 +60,15 @@ outputs_3d = np.random.randint(0, 2, (batch_size_3d, 1)).astype(np.float32)  # B
 # Create a 3D ConvNet
 layers_3d = [
     ConvNDLayer(num_filters=8, kernel_size=(3, 3, 3), stride=1,
-                activation_function=ActivationFunctions.relu),
+                activation_function=relu),
     ConvNDLayer(num_filters=16, kernel_size=(3, 3, 3), stride=2,
-                activation_function=ActivationFunctions.relu),
+                activation_function=relu),
     FlattenLayer(),
-    DenseLayer(1, activation_function=ActivationFunctions.sigmoid)
+    DenseLayer(1, activation_function=sigmoid)
 ]
 
-nn_3d = NeuralNetwork(layers_3d, CostFunctions.cross_entropy)
-nn_3d.compile(optimizer=AdamOptimizer(learning_rate=0.001))
+nn_3d = NeuralNetwork(layers_3d, cross_entropy)
+nn_3d.compile(optimizer=AdamW(learning_rate=0.001))
 
 # Train the network
 nn_3d.fit(inputs_3d, outputs_3d, epochs=50, batch_size=8,
@@ -87,14 +87,14 @@ outputs_5d = np.random.randint(0, 2, (batch_size_5d, 1)).astype(np.float32)  # B
 # Create a 5D ConvNet
 layers_5d = [
     ConvNDLayer(num_filters=4, kernel_size=(3, 3, 3, 3, 3), stride=1,
-                activation_function=ActivationFunctions.relu),
+                activation_function=relu),
     ConvNDLayer(num_filters=8, kernel_size=(3, 3, 3, 3, 3), stride=2,
-                activation_function=ActivationFunctions.relu),
+                activation_function=relu),
     FlattenLayer(),
-    DenseLayer(1, activation_function=ActivationFunctions.sigmoid)
+    DenseLayer(1, activation_function=sigmoid)
 ]
 
-nn_5d = NeuralNetwork(layers_5d, CostFunctions.cross_entropy)
+nn_5d = NeuralNetwork(layers_5d, cross_entropy)
 nn_5d.compile(optimizer=AdamOptimizer(learning_rate=0.001))
 
 # Train the network

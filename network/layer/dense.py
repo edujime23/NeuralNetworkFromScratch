@@ -1,8 +1,8 @@
 import numpy as np
 from typing import Callable, Tuple, List, Optional
 from .base import Layer
-from ..utils.optimizer import Optimizer
-from ..utils.functions import derivative as deriv
+from ..optimizer import Optimizer
+from ..functions import derivative as deriv
 
 class DenseLayer(Layer):
     """

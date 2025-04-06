@@ -3,9 +3,9 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import contextlib
-from network.utils.functions import CostFunctions, ActivationFunctions
+from network.functions import *
 import scipy
-from network.utils.optimizer import *
+from network.optimizer import *
 from inspect import signature
 from network.layer import LSTMLayer, DenseLayer
 from network.neuralNetwork import NeuralNetwork
@@ -125,22 +125,16 @@ if __name__ == "__main__":
 
     layers = [
         LSTMLayer(16, return_sequences=False),
-        DenseLayer(out_dims, activation_function=ActivationFunctions.linear)
+        DenseLayer(out_dims, activation_function=linear)
     ]
 
-    adam = AdamOptimizer(learning_rate=1e-2,
+    adam = Adam(learning_rate=1e-2,
                          weight_decay=0,
-                         use_adamw=True,
-                         amsgrad=True,
-                         gradient_clip=None,
-                         noise_factor=1e-4,
-                         cyclical_lr=True,
-                         lr_max_factor=4,
-                         lr_cycle_steps=10
+                         gradient_clip=None
     )
     sgd = SGD(learning_rate=1e-3, momentum=1e-2, nesterov=True)
 
-    nn = NeuralNetwork(layers, CostFunctions.mean_squared_error, gradient_clip=None, l1_lambda=0, l2_lambda=0)
+    nn = NeuralNetwork(layers, mean_squared_error, gradient_clip=None, l1_lambda=0, l2_lambda=0)
     nn.compile(optimizer=adam)
 
     # Create a multiprocessing Queue with limited size to avoid memory issues

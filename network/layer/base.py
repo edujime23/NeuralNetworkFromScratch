@@ -1,6 +1,7 @@
 import numpy as np
 from typing import Optional, Callable, List, Tuple, Union
-from ..utils import Optimizer, ActivationFunctions
+from ..optimizer import Optimizer
+from ..functions import linear
 from inspect import signature
 
 class Layer:
@@ -29,7 +30,7 @@ class Layer:
         """
         self.num_neurons = num_neurons
         self.num_inputs = num_inputs
-        self.activation_function = activation_function or ActivationFunctions.linear
+        self.activation_function = activation_function or linear
         self.threshold = threshold
         self.signals = None 
         self.inputs = None

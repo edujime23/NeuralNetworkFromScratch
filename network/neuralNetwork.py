@@ -1,10 +1,10 @@
 import pickle
 import numpy as np
 from typing import List, Optional, Callable, Tuple, Type
-from .utils.functions import *
+from .functions import mean_squared_error, derivative
 from .layer import *
 from .utils.loss import Loss
-from .utils.optimizer import Optimizer
+from .optimizer.base import Optimizer
 from .utils.callbacks import Callback
 from .utils.metrics import Metrics
 
@@ -32,7 +32,7 @@ class NeuralNetwork:
             layer._init_optimizer(self.optimizer)
             if hasattr(layer, 'threshold'): # Apply threshold only if the layer has this attribute
                 layer.threshold = self.threshold
-        self.loss = Loss(loss) if loss else Loss(CostFunctions.mean_squared_error)
+        self.loss = Loss(loss) if loss else Loss(mean_squared_error)
         if metrics:
             self.metrics = metrics
         self._is_compiled = True

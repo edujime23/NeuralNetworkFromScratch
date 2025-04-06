@@ -1,8 +1,8 @@
 import numpy as np
 from typing import Optional, Callable, List, Tuple
 from .base import RecurrentLayer
-from ..utils import Optimizer
-from ..utils.functions import derivative, ActivationFunctions
+from ..optimizer import Optimizer
+from ..functions import derivative, sigmoid, tanh, leaky_relu
 
 class SimpleRNNLayer(RecurrentLayer):
     """
@@ -310,10 +310,10 @@ class LSTMLayer(RecurrentLayer):
         output_gate_input = all_gates[:, 3*h_size:]
 
         # Activate the gates
-        self._current_forget_gate_output = ActivationFunctions.sigmoid(forget_gate_input)
-        self._current_input_gate_output = ActivationFunctions.sigmoid(input_gate_input)
+        self._current_forget_gate_output = sigmoid(forget_gate_input)
+        self._current_input_gate_output = sigmoid(input_gate_input)
         self._current_cell_state_candidate = np.tanh(cell_state_candidate_input)
-        self._current_output_gate_output = ActivationFunctions.sigmoid(output_gate_input)
+        self._current_output_gate_output = sigmoid(output_gate_input)
 
         # Update cell state with element-wise operations
         self.cell_state = self._current_forget_gate_output * self.cell_state + self._current_input_gate_output * self._current_cell_state_candidate
@@ -364,31 +364,31 @@ class LSTMLayer(RecurrentLayer):
 
             # Gradient for output gate
             dot = dht * np.tanh(ct)
-            doutput_gate_input = dot * derivative(ActivationFunctions.sigmoid, 'all', np.matmul(input_t, self.Wo) + np.matmul(hidden_prev, self.Uo) + self.bo)
+            doutput_gate_input = dot * derivative(sigmoid, 'all', np.matmul(input_t, self.Wo) + np.matmul(hidden_prev, self.Uo) + self.bo)
             self.dWo += np.matmul(input_t.T, doutput_gate_input)
             self.dUo += np.matmul(hidden_prev.T, doutput_gate_input)
             self.dbo += np.sum(doutput_gate_input, axis=0)
 
             # Gradient for cell state
-            dct = dht * ot * derivative(ActivationFunctions.tanh, 'all', ct) + d_cell_next
+            dct = dht * ot * derivative(tanh, 'all', ct) + d_cell_next
 
             # Gradient for candidate cell state
             dct_candidate = dct * it
-            dcell_state_candidate_input = dct_candidate * derivative(ActivationFunctions.tanh, 'all', np.matmul(input_t, self.Wc) + np.matmul(hidden_prev, self.Uc) + self.bc)
+            dcell_state_candidate_input = dct_candidate * derivative(tanh, 'all', np.matmul(input_t, self.Wc) + np.matmul(hidden_prev, self.Uc) + self.bc)
             self.dWc += np.matmul(input_t.T, dcell_state_candidate_input)
             self.dUc += np.matmul(hidden_prev.T, dcell_state_candidate_input)
             self.dbc += np.sum(dcell_state_candidate_input, axis=0)
 
             # Gradient for input gate
             dit = dct * ct_candidate
-            dinput_gate_input = dit * derivative(ActivationFunctions.sigmoid, 'all', np.matmul(input_t, self.Wi) + np.matmul(hidden_prev, self.Ui) + self.bi)
+            dinput_gate_input = dit * derivative(sigmoid, 'all', np.matmul(input_t, self.Wi) + np.matmul(hidden_prev, self.Ui) + self.bi)
             self.dWi += np.matmul(input_t.T, dinput_gate_input)
             self.dUi += np.matmul(hidden_prev.T, dinput_gate_input)
             self.dbi += np.sum(dinput_gate_input, axis=0)
 
             # Gradient for forget gate
             dft = dct * cell_prev
-            dforget_gate_input = dft * derivative(ActivationFunctions.sigmoid, 'all', np.matmul(input_t, self.Wf) + np.matmul(hidden_prev, self.Uf) + self.bf)
+            dforget_gate_input = dft * derivative(sigmoid, 'all', np.matmul(input_t, self.Wf) + np.matmul(hidden_prev, self.Uf) + self.bf)
             self.dWf += np.matmul(input_t.T, dforget_gate_input)
             self.dUf += np.matmul(hidden_prev.T, dforget_gate_input)
             self.dbf += np.sum(dforget_gate_input, axis=0)
@@ -536,11 +536,11 @@ class GRULayer(RecurrentLayer):
 
         # Update gate
         update_gate_input = np.matmul(input_at_t, self.Wz) + np.matmul(self.hidden_state, self.Uz) + self.bz
-        self.update_gate_output = ActivationFunctions.sigmoid(update_gate_input)
+        self.update_gate_output = sigmoid(update_gate_input)
 
         # Reset gate
         reset_gate_input = np.matmul(input_at_t, self.Wr) + np.matmul(self.hidden_state, self.Ur) + self.br
-        self.reset_gate_output = ActivationFunctions.sigmoid(reset_gate_input)
+        self.reset_gate_output = sigmoid(reset_gate_input)
 
         # Current memory content
         h_candidate_input = np.matmul(input_at_t, self.Wh) + np.matmul(self.reset_gate_output * self.hidden_state, self.Uh) + self.bh
@@ -591,14 +591,14 @@ class GRULayer(RecurrentLayer):
 
             # Gradient for reset gate
             dreset_gate_raw = np.matmul(dh_candidate_input, self.Uh.T) * hidden_prev
-            dreset_gate_input = dreset_gate_raw * derivative(ActivationFunctions.sigmoid, 'all', np.matmul(input_t, self.Wr) + np.matmul(hidden_prev, self.Ur) + self.br)
+            dreset_gate_input = dreset_gate_raw * derivative(sigmoid, 'all', np.matmul(input_t, self.Wr) + np.matmul(hidden_prev, self.Ur) + self.br)
             self.dWr += np.matmul(input_t.T, dreset_gate_input)
             self.dUr += np.matmul(hidden_prev.T, dreset_gate_input)
             self.dbr += np.sum(dreset_gate_input, axis=0)
 
             # Gradient for update gate
             dupdate_gate_raw = dht * (ht - hidden_prev)
-            dupdate_gate_input = dupdate_gate_raw * derivative(ActivationFunctions.sigmoid, 'all', np.matmul(input_t, self.Wz) + np.matmul(hidden_prev, self.Uz) + self.bz)
+            dupdate_gate_input = dupdate_gate_raw * derivative(sigmoid, 'all', np.matmul(input_t, self.Wz) + np.matmul(hidden_prev, self.Uz) + self.bz)
             self.dWz += np.matmul(input_t.T, dupdate_gate_input)
             self.dUz += np.matmul(hidden_prev.T, dupdate_gate_input)
             self.dbz += np.sum(dupdate_gate_input, axis=0)
@@ -718,7 +718,7 @@ class IndRNNLayer(RecurrentLayer):
     """
     Independently Recurrent Neural Network (IndRNN) layer.
     """
-    def __init__(self, units: int, activation: Callable[[np.ndarray], np.ndarray] = ActivationFunctions.leaky_relu, return_sequences: bool = False, trainable: bool = True):
+    def __init__(self, units: int, activation: Callable[[np.ndarray], np.ndarray] = leaky_relu, return_sequences: bool = False, trainable: bool = True):
         super().__init__(units, activation, return_sequences, trainable)
         self.Wr = None  # Recurrent weights (vector)
         self.Wx = None  # Input weights

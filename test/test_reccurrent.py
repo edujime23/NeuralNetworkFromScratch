@@ -3,11 +3,9 @@ from pathlib import Path
 sys.path.append(Path(__file__).parent.parent.__str__())
 
 import numpy as np
-import matplotlib.pyplot as plt
-from typing import Optional, Callable
 
-from network.utils.functions import CostFunctions, ActivationFunctions
-from network.utils.optimizer import AdamOptimizer
+from network.functions import *
+from network.optimizer import *
 from network.layer import (
     SimpleRNNLayer,
     LSTMLayer,
@@ -57,7 +55,7 @@ esp=1000
 tol=1e-4
 
 recurrent_layer_configs = [
-    {"layer": SimpleRNNLayer, "kwargs": {"units": units, "return_sequences": False, "activation": ActivationFunctions.tanh}},
+    {"layer": SimpleRNNLayer, "kwargs": {"units": units, "return_sequences": False, "activation": tanh}},
     {"layer": LSTMLayer, "kwargs": {"units": units, "return_sequences": False}},
     {"layer": GRULayer, "kwargs": {"units": units, "return_sequences": False}},
     {
@@ -98,11 +96,11 @@ for rnn_config in recurrent_layer_configs:
     # Create the network
     layers = [
         recurrent_layer,
-        DenseLayer(1, activation_function=ActivationFunctions.relu)
+        DenseLayer(1, activation_function=relu)
     ]
-    nn = NeuralNetwork(layers, CostFunctions.mean_absolute_error,
+    nn = NeuralNetwork(layers, mean_absolute_error,
                        l1_lambda=1e-5, l2_lambda=1e-4)
-    nn.compile(optimizer=AdamOptimizer(learning_rate=learning_rate, weight_decay=1e-2))
+    nn.compile(optimizer=Adam(learning_rate=learning_rate, weight_decay=1e-2))
 
     # Train the network
     nn.fit(train_inputs, train_outputs, epochs=epochs, batch_size=batch_size,

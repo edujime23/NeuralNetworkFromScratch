@@ -2,7 +2,7 @@ import itertools
 import numpy as np
 from typing import Optional, Callable, Tuple, Union, List
 from .base import ConvolutionalLayer
-from ..utils.functions import derivative as deriv
+from ..functions import derivative as deriv
 from scipy.signal import convolve2d, convolve
 
 class ConvNDLayer(ConvolutionalLayer):

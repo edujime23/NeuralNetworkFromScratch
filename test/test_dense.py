@@ -3,8 +3,8 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import contextlib
-from network.utils.functions import CostFunctions, ActivationFunctions
-from network.utils.optimizer import *
+from network.functions import *
+from network.optimizer import *
 from inspect import signature
 from network.layer import DenseLayer
 from network.neuralNetwork import NeuralNetwork
@@ -96,29 +96,23 @@ if __name__ == "__main__":
     train_outputs = outputs
     
     layers = [
-        DenseLayer(64, activation_function=ActivationFunctions.prelu) for _ in range(8)
+        DenseLayer(64, activation_function=prelu) for _ in range(8)
     ]
     
     layers.extend([
-        DenseLayer(64, activation_function=ActivationFunctions.linear),
-        DenseLayer(64, activation_function=ActivationFunctions.linear),
-        DenseLayer(out_dims, activation_function=ActivationFunctions.linear)
+        DenseLayer(64, activation_function=linear),
+        DenseLayer(64, activation_function=linear),
+        DenseLayer(out_dims, activation_function=linear)
     ])
     
-    adam = AdamOptimizer(learning_rate=1e-4, 
+    adam = Adam(learning_rate=1e-4, 
                         weight_decay=0, 
-                        use_adamw=True, 
-                        amsgrad=True, 
-                        gradient_clip=None,
-                        noise_factor=0,
-                        cyclical_lr=True,
-                        lr_max_factor=2, 
-                        lr_cycle_steps=100
+                        gradient_clip=None
     )
     sgd = SGD(learning_rate=1e-4, momentum=1/2, nesterov=True)
     rmsprop = RMSprop(learning_rate=1e-3, rho=0.9, gradient_clip=1)
     
-    nn = NeuralNetwork(layers, CostFunctions.huber_loss, gradient_clip=None, l1_lambda=0, l2_lambda=0)
+    nn = NeuralNetwork(layers, huber_loss, gradient_clip=None, l1_lambda=0, l2_lambda=0)
     nn.compile(optimizer=adam)
     
     # Create a multiprocessing Queue with limited size to avoid memory issues
