@@ -1,6 +1,7 @@
 import numpy as np
 from typing import Optional, Callable, List, Tuple, Union
-from utils import Optimizer, ActivationFunctions
+from ..utils import Optimizer, ActivationFunctions
+from inspect import signature
 
 class Layer:
     """
@@ -30,7 +31,7 @@ class Layer:
         self.num_inputs = num_inputs
         self.activation_function = activation_function or ActivationFunctions.linear
         self.threshold = threshold
-        self.signals = None
+        self.signals = None 
         self.inputs = None
         self.optimizer: Optional[Optimizer] = None
 
@@ -41,6 +42,11 @@ class Layer:
             optimizer (Optimizer): The optimizer object to use.
         """
         self.optimizer = optimizer
+        # Asumes the extra parameters of the activation function are trainable parameters
+        if len(params := signature(self.activation_function).parameters) > 1:
+            for param in list(params.values())[1:]:
+                setattr(self, param.name, np.zeros(self.num_neurons))
+                optimizer.register_parameter(getattr(self, param.name), param.name)
 
     def update(self) -> None:
         """Updates the parameters of the layer using the optimizer."""

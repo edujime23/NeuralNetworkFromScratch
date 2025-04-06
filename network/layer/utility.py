@@ -1,7 +1,7 @@
 import itertools
 import numpy as np
 from typing import Optional, Tuple, Union, List
-from layer.base import Layer, PoolingLayer
+from .base import Layer, PoolingLayer
 
 class MaxPoolingLayer(PoolingLayer):
     """

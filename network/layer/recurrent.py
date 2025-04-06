@@ -1,8 +1,8 @@
 import numpy as np
 from typing import Optional, Callable, List, Tuple
-from layer.base import RecurrentLayer
-from utils import Optimizer
-from utils.functions import derivative, ActivationFunctions
+from .base import RecurrentLayer
+from ..utils import Optimizer
+from ..utils.functions import derivative, ActivationFunctions
 
 class SimpleRNNLayer(RecurrentLayer):
     """
@@ -84,8 +84,8 @@ class SimpleRNNLayer(RecurrentLayer):
             d_h_raw = d_h * activation_derivative
             
             # Using einsum for weight gradients
-            self.dWh += hidden_prev @ d_h_raw
-            self.dWx += input_t @ d_h_raw
+            self.dWh += hidden_prev.T @ d_h_raw
+            self.dWx += input_t.T @ d_h_raw
             
             # Bias gradient - sum across batch dimension
             self.db += np.sum(d_h_raw, axis=0)

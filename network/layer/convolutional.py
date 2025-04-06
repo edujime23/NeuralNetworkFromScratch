@@ -1,8 +1,8 @@
 import itertools
 import numpy as np
 from typing import Optional, Callable, Tuple, Union, List
-from layer.base import ConvolutionalLayer
-from utils.functions import derivative as deriv
+from .base import ConvolutionalLayer
+from ..utils.functions import derivative as deriv
 from scipy.signal import convolve2d, convolve
 
 class ConvNDLayer(ConvolutionalLayer):

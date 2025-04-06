@@ -1,15 +1,14 @@
-import contextlib
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import scipy.fft
-import scipy.optimize
-import scipy.signal
-from utils.functions import CostFunctions, ActivationFunctions
-import scipy
-from utils.optimizer import *
+import contextlib
+from network.utils.functions import CostFunctions, ActivationFunctions
+from network.utils.optimizer import *
 from inspect import signature
-from layer import DenseLayer
-from neuralNetwork import NeuralNetwork
-from utils.callbacks import Callback
+from network.layer import DenseLayer
+from network.neuralNetwork import NeuralNetwork
+from network.utils.callbacks import Callback
 import numpy as np
 import matplotlib.pyplot as plt
 import multiprocessing as mp
@@ -80,7 +79,7 @@ class LivePlotCallback(Callback):
                 self.last_put_time = current_time
 
 def func(x):
-    return x**2 * np.sin(x) ** 2
+    return np.exp(x) + np.sin(x)
 
 if __name__ == "__main__":
     # Using context manager to ensure clean process termination
@@ -97,22 +96,27 @@ if __name__ == "__main__":
     train_outputs = outputs
     
     layers = [
-        DenseLayer(64, activation_function=ActivationFunctions.leaky_relu) for _ in range(4)
+        DenseLayer(64, activation_function=ActivationFunctions.prelu) for _ in range(8)
     ]
     
-    layers.append(DenseLayer(out_dims, activation_function=ActivationFunctions.linear))
+    layers.extend([
+        DenseLayer(64, activation_function=ActivationFunctions.linear),
+        DenseLayer(64, activation_function=ActivationFunctions.linear),
+        DenseLayer(out_dims, activation_function=ActivationFunctions.linear)
+    ])
     
     adam = AdamOptimizer(learning_rate=1e-4, 
                         weight_decay=0, 
                         use_adamw=True, 
                         amsgrad=True, 
                         gradient_clip=None,
-                        noise_factor=1e-4,
+                        noise_factor=0,
                         cyclical_lr=True,
-                        lr_max_factor=4, 
-                        lr_cycle_steps=10
+                        lr_max_factor=2, 
+                        lr_cycle_steps=100
     )
-    sgd = SGD(learning_rate=1e-3, momentum=1e-2, nesterov=True)
+    sgd = SGD(learning_rate=1e-4, momentum=1/2, nesterov=True)
+    rmsprop = RMSprop(learning_rate=1e-3, rho=0.9, gradient_clip=1)
     
     nn = NeuralNetwork(layers, CostFunctions.huber_loss, gradient_clip=None, l1_lambda=0, l2_lambda=0)
     nn.compile(optimizer=adam)

@@ -90,8 +90,8 @@ class ActivationFunctions:
         return np.maximum(0, x)
 
     @staticmethod
-    def leaky_relu(x: np.ndarray) -> np.ndarray:
-        return np.where(x > 0, x, 0.01 * x)
+    def leaky_relu(x: np.ndarray, alpha: float = 0.01) -> np.ndarray:
+        return np.where(x > 0, x, alpha * x)
 
     @staticmethod
     def tanh(x: np.ndarray) -> np.ndarray:
@@ -128,6 +128,21 @@ class ActivationFunctions:
             np.ndarray: ELU output.
         """
         return np.where(x > 0, x, alpha * (np.exp(np.clip(x, -700, 700)) - 1))
+    
+    @staticmethod
+    def prelu(x: np.ndarray, alpha: Union[float, np.ndarray] = 0.01) -> np.ndarray:
+        """
+        Parametric ReLU (PReLU) activation function.
+
+        Args:
+            x (np.ndarray): Input array.
+            alpha (Union[float, np.ndarray]): The learnable slope for the negative part.
+                                              Can be a single float or an array with the same shape as x.
+
+        Returns:
+            np.ndarray: PReLU output.
+        """
+        return np.where(x > 0, x, alpha * x)
 
     @staticmethod
     def swish(x: np.ndarray) -> np.ndarray:

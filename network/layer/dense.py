@@ -1,9 +1,8 @@
 import numpy as np
 from typing import Callable, Tuple, List, Optional
-from layer.base import Layer
-from utils.optimizer import Optimizer
-from utils.functions import derivative as deriv
-import numba
+from .base import Layer
+from ..utils.optimizer import Optimizer
+from ..utils.functions import derivative as deriv
 
 class DenseLayer(Layer):
     """
@@ -89,7 +88,7 @@ class DenseLayer(Layer):
 
         return np.matmul(delta, self.weights)
 
-    def _init_optimizer(self, optimizer: 'Optimizer'):
+    def _init_optimizer(self, optimizer: Optimizer):
         """Initializes the optimizer for the weights and biases of the layer.
 
         Args:

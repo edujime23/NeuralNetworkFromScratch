@@ -1,12 +1,12 @@
 import pickle
 import numpy as np
 from typing import List, Optional, Callable, Tuple, Type
-from utils.functions import *
-from layer import *
-from utils.loss import Loss
-from utils.optimizer import Optimizer  # Import the base Optimizer class
-from utils.callbacks import Callback
-from utils.metrics import Metrics # Assuming metrics are in utils/metrics.py
+from .utils.functions import *
+from .layer import *
+from .utils.loss import Loss
+from .utils.optimizer import Optimizer  # Import the base Optimizer class
+from .utils.callbacks import Callback
+from .utils.metrics import Metrics # Assuming metrics are in utils/metrics.py
 
 # Neural Network class
 class NeuralNetwork:
@@ -46,21 +46,38 @@ class NeuralNetwork:
     def fit(self, x: np.ndarray, y: np.ndarray, epochs: int = 1, batch_size: int = 32, validation_data: Optional[Tuple[np.ndarray, np.ndarray]] = None, callbacks: Optional[List[Callback]] = None, early_stopping_patience: int = 10, tol: float = 1e-4, restore_best_weights: bool = False):
         if not self._is_compiled:
             raise RuntimeError("The model must be compiled before training.")
-        
+
         # Ensure inputs and targets are float64
-        x = np.array(x, dtype=np.float64)
-        y = np.array(y, dtype=np.float64)
-        
+        x = np.asarray(x, dtype=np.float64)
+        y = np.asarray(y, dtype=np.float64)
+
         best_val_loss = float('inf')
         best_model_weights = None
-        epochs_no_improvement = 0
+        epochs_without_improvement = 0
+        self.callbacks = callbacks or []  # Store callbacks in the instance
+
         if validation_data:
-            validation_data = (np.array(validation_data[0], dtype=np.float64), 
-                             np.array(validation_data[1], dtype=np.float64))
-        self.callbacks = callbacks or [] # Store callbacks in the instance
+            val_x = np.asarray(validation_data[0], dtype=np.float64)
+            val_y = np.asarray(validation_data[1], dtype=np.float64)
+            validation_data = (val_x, val_y)
 
         self._trigger_callbacks(self.callbacks, 'on_train_begin')
+        self._run_epochs(
+            x=x,
+            y=y,
+            batch_size=batch_size,
+            validation_data=validation_data,
+            epochs=epochs,
+            tol=tol,
+            best_val_loss=best_val_loss,
+            best_model_weights=best_model_weights,
+            epochs_no_improvement=epochs_without_improvement,
+            early_stopping_patience=early_stopping_patience,
+            restore_best_weights=restore_best_weights
+        )
+        self._trigger_callbacks(self.callbacks, 'on_train_end')
 
+    def _run_epochs(self, x: np.ndarray, y: np.ndarray, batch_size: int, validation_data: Optional[Tuple[np.ndarray, np.ndarray]], epochs: int, tol: float, best_val_loss: float, best_model_weights: Optional[List[np.ndarray]], epochs_no_improvement: int, early_stopping_patience: int, restore_best_weights: bool):
         for epoch in range(epochs):
             self._trigger_callbacks(self.callbacks, 'on_epoch_begin', epoch)
             self._train_on_batch(x, y, batch_size, self.callbacks)
@@ -72,10 +89,10 @@ class NeuralNetwork:
 
                 # Check for tolerance
                 if current_val_loss < tol:
-                    print(f"Validation loss reached tolerance ({tol}) at epoch {epoch+1}. Stopping training.")
+                    print(f"Validation loss reached tolerance ({tol:.4f}) at epoch {epoch + 1}. Stopping training.")
                     break
 
-                # Check for improvement (using a small epsilon for comparison)
+                # Check for improvement
                 if current_val_loss < best_val_loss - 1e-6:
                     best_val_loss = current_val_loss
                     best_model_weights = self._get_model_weights()
@@ -83,13 +100,11 @@ class NeuralNetwork:
                 else:
                     epochs_no_improvement += 1
                     if epochs_no_improvement >= early_stopping_patience:
-                        print(f"Early stopping triggered at epoch {epoch+1} (no improvement in validation loss for {early_stopping_patience} epochs).")
+                        print(f"Early stopping triggered at epoch {epoch + 1} (no improvement in validation loss for {early_stopping_patience} epochs).")
                         if restore_best_weights and best_model_weights is not None:
                             self._set_model_weights(best_model_weights)
                             print("Restored model weights from the best epoch.")
                         break
-
-        self._trigger_callbacks(self.callbacks, 'on_train_end')
 
     def _get_model_weights(self) -> List[np.ndarray]:
         weights = []
