@@ -43,11 +43,6 @@ class Layer:
             optimizer (Optimizer): The optimizer object to use.
         """
         self.optimizer = optimizer
-        # Asumes the extra parameters of the activation function are trainable parameters
-        if len(params := signature(self.activation_function).parameters) > 1:
-            for param in list(params.values())[1:]:
-                setattr(self, param.name, np.zeros(self.num_neurons))
-                optimizer.register_parameter(getattr(self, param.name), param.name)
 
     def update(self) -> None:
         """Updates the parameters of the layer using the optimizer."""

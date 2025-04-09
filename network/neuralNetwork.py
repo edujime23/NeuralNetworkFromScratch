@@ -1,6 +1,6 @@
 import pickle
 import numpy as np
-from typing import List, Optional, Callable, Tuple, Type
+from typing import List, Optional, Callable, Tuple
 from .functions import mean_squared_error, derivative
 from .layer import *
 from .utils.loss import Loss
@@ -170,8 +170,8 @@ class NeuralNetwork:
         return inputs
 
     def _backward_pass(self, targets: np.ndarray) -> None:
-        grad = derivative(self.loss, 0, self.layers[-1].signals, targets)
-
+        grad = derivative(func=self.loss, args=(self.layers[-1].signals, targets), mode='derivative', arg_index=0)
+        
         self._trigger_callbacks(self.callbacks, 'on_backward_pass_begin', targets=targets, output_gradient=grad)
         self._trigger_callbacks(self.callbacks, 'on_backward_output_gradient', gradient=grad)
         for layer in reversed(self.layers):

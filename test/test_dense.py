@@ -79,7 +79,7 @@ class LivePlotCallback(Callback):
                 self.last_put_time = current_time
 
 def func(x):
-    return np.exp(x) + np.sin(x)
+    return np.sqrt(x)**6
 
 if __name__ == "__main__":
     # Using context manager to ensure clean process termination
@@ -96,7 +96,7 @@ if __name__ == "__main__":
     train_outputs = outputs
     
     layers = [
-        DenseLayer(64, activation_function=prelu) for _ in range(8)
+        DenseLayer(64, activation_function=leaky_relu) for _ in range(8)
     ]
     
     layers.extend([
@@ -109,11 +109,16 @@ if __name__ == "__main__":
                         weight_decay=0, 
                         gradient_clip=None
     )
+    adamW = AdamW(learning_rate=1e-4, 
+                        weight_decay=0, 
+                        gradient_clip=None
+    )
+    amsgrad = AMSGrad(learning_rate=1e-4, weight_decay=0, gradient_clip=None)
     sgd = SGD(learning_rate=1e-4, momentum=1/2, nesterov=True)
     rmsprop = RMSprop(learning_rate=1e-3, rho=0.9, gradient_clip=1)
     
     nn = NeuralNetwork(layers, huber_loss, gradient_clip=None, l1_lambda=0, l2_lambda=0)
-    nn.compile(optimizer=adam)
+    nn.compile(optimizer=adamW)
     
     # Create a multiprocessing Queue with limited size to avoid memory issues
     plot_queue = mp.Queue()  # Only keep latest few predictions

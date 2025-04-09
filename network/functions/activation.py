@@ -45,20 +45,6 @@ def elu(x: np.ndarray, alpha: float = 1.0) -> np.ndarray:
     """
     return np.where(x > 0, x, alpha * (np.exp(np.clip(x, -700, 700)) - 1))
 
-def prelu(x: np.ndarray, alpha: Union[float, np.ndarray] = 0.01) -> np.ndarray:
-    """
-    Parametric ReLU (PReLU) activation function.
-
-    Args:
-        x (np.ndarray): Input array.
-        alpha (Union[float, np.ndarray]): The learnable slope for the negative part.
-                                            Can be a single float or an array with the same shape as x.
-
-    Returns:
-        np.ndarray: PReLU output.
-    """
-    return np.where(x > 0, x, alpha * x)
-
 def swish(x: np.ndarray) -> np.ndarray:
     """
     Swish activation function.

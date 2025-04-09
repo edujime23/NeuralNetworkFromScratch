@@ -75,7 +75,7 @@ class SimpleRNNLayer(RecurrentLayer):
             pre_activation = self.last_pre_activation[t] if self.return_sequences else self.last_pre_activation
             
             # Calculate activation derivative
-            activation_derivative = derivative(self.activation_function, 'all', pre_activation)
+            activation_derivative = derivative(self.activation_function, pre_activation)
             
             # Compute d_h with gradient from next timestep
             d_h = grad[:, t, :] + d_hidden_next
@@ -364,31 +364,31 @@ class LSTMLayer(RecurrentLayer):
 
             # Gradient for output gate
             dot = dht * np.tanh(ct)
-            doutput_gate_input = dot * derivative(sigmoid, 'all', np.matmul(input_t, self.Wo) + np.matmul(hidden_prev, self.Uo) + self.bo)
+            doutput_gate_input = dot * derivative(sigmoid, np.matmul(input_t, self.Wo) + np.matmul(hidden_prev, self.Uo) + self.bo)
             self.dWo += np.matmul(input_t.T, doutput_gate_input)
             self.dUo += np.matmul(hidden_prev.T, doutput_gate_input)
             self.dbo += np.sum(doutput_gate_input, axis=0)
 
             # Gradient for cell state
-            dct = dht * ot * derivative(tanh, 'all', ct) + d_cell_next
+            dct = dht * ot * derivative(tanh, ct) + d_cell_next
 
             # Gradient for candidate cell state
             dct_candidate = dct * it
-            dcell_state_candidate_input = dct_candidate * derivative(tanh, 'all', np.matmul(input_t, self.Wc) + np.matmul(hidden_prev, self.Uc) + self.bc)
+            dcell_state_candidate_input = dct_candidate * derivative(tanh, np.matmul(input_t, self.Wc) + np.matmul(hidden_prev, self.Uc) + self.bc)
             self.dWc += np.matmul(input_t.T, dcell_state_candidate_input)
             self.dUc += np.matmul(hidden_prev.T, dcell_state_candidate_input)
             self.dbc += np.sum(dcell_state_candidate_input, axis=0)
 
             # Gradient for input gate
             dit = dct * ct_candidate
-            dinput_gate_input = dit * derivative(sigmoid, 'all', np.matmul(input_t, self.Wi) + np.matmul(hidden_prev, self.Ui) + self.bi)
+            dinput_gate_input = dit * derivative(sigmoid, np.matmul(input_t, self.Wi) + np.matmul(hidden_prev, self.Ui) + self.bi)
             self.dWi += np.matmul(input_t.T, dinput_gate_input)
             self.dUi += np.matmul(hidden_prev.T, dinput_gate_input)
             self.dbi += np.sum(dinput_gate_input, axis=0)
 
             # Gradient for forget gate
             dft = dct * cell_prev
-            dforget_gate_input = dft * derivative(sigmoid, 'all', np.matmul(input_t, self.Wf) + np.matmul(hidden_prev, self.Uf) + self.bf)
+            dforget_gate_input = dft * derivative(sigmoid, np.matmul(input_t, self.Wf) + np.matmul(hidden_prev, self.Uf) + self.bf)
             self.dWf += np.matmul(input_t.T, dforget_gate_input)
             self.dUf += np.matmul(hidden_prev.T, dforget_gate_input)
             self.dbf += np.sum(dforget_gate_input, axis=0)
@@ -585,20 +585,20 @@ class GRULayer(RecurrentLayer):
 
             # Gradient for current memory content
             dcurrent_memory_raw = dht * zt
-            dh_candidate_input = dcurrent_memory_raw * derivative(np.tanh, 'all', np.matmul(input_t, self.Wh) + np.matmul(rt * hidden_prev, self.Uh) + self.bh)
+            dh_candidate_input = dcurrent_memory_raw * derivative(np.tanh, np.matmul(input_t, self.Wh) + np.matmul(rt * hidden_prev, self.Uh) + self.bh)
             self.dWh += np.matmul(input_t.T, dh_candidate_input)
             self.dbh += np.sum(dh_candidate_input, axis=0)
 
             # Gradient for reset gate
             dreset_gate_raw = np.matmul(dh_candidate_input, self.Uh.T) * hidden_prev
-            dreset_gate_input = dreset_gate_raw * derivative(sigmoid, 'all', np.matmul(input_t, self.Wr) + np.matmul(hidden_prev, self.Ur) + self.br)
+            dreset_gate_input = dreset_gate_raw * derivative(sigmoid, np.matmul(input_t, self.Wr) + np.matmul(hidden_prev, self.Ur) + self.br)
             self.dWr += np.matmul(input_t.T, dreset_gate_input)
             self.dUr += np.matmul(hidden_prev.T, dreset_gate_input)
             self.dbr += np.sum(dreset_gate_input, axis=0)
 
             # Gradient for update gate
             dupdate_gate_raw = dht * (ht - hidden_prev)
-            dupdate_gate_input = dupdate_gate_raw * derivative(sigmoid, 'all', np.matmul(input_t, self.Wz) + np.matmul(hidden_prev, self.Uz) + self.bz)
+            dupdate_gate_input = dupdate_gate_raw * derivative(sigmoid, np.matmul(input_t, self.Wz) + np.matmul(hidden_prev, self.Uz) + self.bz)
             self.dWz += np.matmul(input_t.T, dupdate_gate_input)
             self.dUz += np.matmul(hidden_prev.T, dupdate_gate_input)
             self.dbz += np.sum(dupdate_gate_input, axis=0)
@@ -790,7 +790,7 @@ class IndRNNLayer(RecurrentLayer):
             pre_activation = self.last_pre_activation[t] if self.return_sequences else self.last_pre_activation
 
             # Calculate the derivative of the activation function
-            activation_derivative = derivative(self.activation_function, 'all', pre_activation)
+            activation_derivative = derivative(self.activation_function, pre_activation)
 
             # Gradient from the next time step
             d_h = grad[:, t, :] + d_hidden_next if self.return_sequences else grad + d_hidden_next
@@ -896,7 +896,7 @@ class CTRNNLayer(RecurrentLayer):
             state_t = self.state
 
             # 1. Derivative of activation
-            activation_derivative = derivative(self.activation_function, 'all', state_t)
+            activation_derivative = derivative(self.activation_function, state_t)
 
             # 2. Gradient from the next time step
             d_h = grad[:, t, :] + d_state_next if self.return_sequences else grad + d_state_next

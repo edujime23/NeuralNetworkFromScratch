@@ -1,7 +1,7 @@
 from .base import Optimizer
 import numpy as np
 
-class AmsGrad(Optimizer):
+class AMSGrad(Optimizer):
     def __init__(self, learning_rate=0.001, beta1=0.9, beta2=0.999, epsilon=1e-8,
                  weight_decay=0.0, gradient_clip=None):
         super().__init__(learning_rate, gradient_clip)
