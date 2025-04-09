@@ -149,7 +149,7 @@ class NumericalDerivation:
         if h_ld <= 0:
             raise ValueError("Finite difference step h must be positive.")
 
-        args_list_ld = list(np.asarray(arg, dtype=np.longdouble) for arg in args_f128)
+        args_list_ld = [np.asarray(arg, dtype=np.longdouble) for arg in args_f128]
         original_arg_ld = args_list_ld[idx]
 
         # Adaptive step size adjustment
