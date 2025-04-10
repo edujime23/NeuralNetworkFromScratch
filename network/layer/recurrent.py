@@ -40,62 +40,52 @@ class SimpleRNNLayer(RecurrentLayer):
             self.optimizer.register_parameter(self.b, 'b')
 
     def _step(self, input_at_t: np.ndarray) -> np.ndarray:
+        """
+        Optimized single time step computation.
+        """
         if self.Wh is None:
             self._initialize_weights(self.inputs.shape)
+
         self.prev_hidden_state = self.hidden_state.copy()
-        self.last_pre_activation = np.matmul(input_at_t, self.Wx) + \
-            np.matmul(self.hidden_state, self.Wh) + self.b
+        self.last_pre_activation = np.dot(input_at_t, self.Wx) + np.dot(self.hidden_state, self.Wh) + self.b
         self.hidden_state = self.activation_function(self.last_pre_activation)
         return self.hidden_state
 
     def backward(self, grad: np.ndarray) -> np.ndarray:
+        """
+        Optimized backward pass for SimpleRNNLayer.
+        """
         if self.Wh is None:
             return np.zeros_like(self.inputs)
-        
+
         batch_size, time_steps, input_dim = self.inputs.shape
         d_input = np.zeros_like(self.inputs)
         d_hidden_next = np.zeros_like(self.hidden_state)
-        
-        # Pre-allocate gradient matrices
-        self.dWh = np.zeros_like(self.Wh)
-        self.dWx = np.zeros_like(self.Wx)
-        self.db = np.zeros_like(self.b)
-        
-        # Handle gradient format based on return_sequences flag
+
+        self.dWh.fill(0)
+        self.dWx.fill(0)
+        self.db.fill(0)
+
         if not self.return_sequences:
-            # Expand grad to match timestep format for consistent processing
             grad_expanded = np.zeros((batch_size, time_steps, self.units))
             grad_expanded[:, -1, :] = grad
             grad = grad_expanded
-        
+
         for t in reversed(range(time_steps)):
-            # Get current timestep data
             input_t = self.inputs[:, t, :]
             hidden_prev = self.prev_hidden_state if t > 0 else np.zeros((batch_size, self.units))
-            pre_activation = self.last_pre_activation[t] if self.return_sequences else self.last_pre_activation
-            
-            # Calculate activation derivative
-            activation_derivative = derivative(self.activation_function, pre_activation)
-            
-            # Compute d_h with gradient from next timestep
+
+            activation_derivative = derivative(self.activation_function, self.last_pre_activation)
             d_h = grad[:, t, :] + d_hidden_next
-            
-            # Gradient through activation
             d_h_raw = d_h * activation_derivative
-            
-            # Using einsum for weight gradients
-            self.dWh += hidden_prev.T @ d_h_raw
-            self.dWx += input_t.T @ d_h_raw
-            
-            # Bias gradient - sum across batch dimension
+
+            self.dWh += np.dot(hidden_prev.T, d_h_raw)
+            self.dWx += np.dot(input_t.T, d_h_raw)
             self.db += np.sum(d_h_raw, axis=0)
-            
-            # Gradient for previous hidden state using matrix multiplication
-            d_hidden_next = d_h_raw @ self.Wh.T
-            
-            # Gradient for input
-            d_input[:, t, :] = d_h_raw @ self.Wx.T
-        
+
+            d_hidden_next = np.dot(d_h_raw, self.Wh.T)
+            d_input[:, t, :] = np.dot(d_h_raw, self.Wx.T)
+
         return d_input
 
     def _get_params_and_grads(self) -> List[Tuple[np.ndarray, np.ndarray]]:
@@ -834,6 +824,7 @@ class CTRNNLayer(RecurrentLayer):
     def __init__(self, units: int, time_constants: Optional[np.ndarray] = None, activation: Callable[[np.ndarray], np.ndarray] = np.tanh, trainable: bool = True):
         super().__init__(units, trainable=trainable)
         self.weights = None  # Connection weights
+        self.Wx = None  # Input-to-hidden weights
         self.biases = None
         self.time_constants = time_constants if time_constants is not None else np.ones(units) # Tau values for each neuron
         self.activation_function = activation
@@ -841,80 +832,93 @@ class CTRNNLayer(RecurrentLayer):
         self.last_inputs = None
 
         self.d_weights = None
+        self.d_Wx = None
         self.d_biases = None
 
     def _initialize_weights(self, input_shape):
+        """
+        Initialize weights, biases, and input-to-hidden weights.
+        """
         input_dim = input_shape[-1]
-        scale = np.sqrt(1.0 / self.units)
-        self.weights = np.random.randn(self.units, self.units) * scale
+        scale_hidden = np.sqrt(1.0 / self.units)
+        scale_input = np.sqrt(1.0 / input_dim)
+        self.weights = np.random.randn(self.units, self.units) * scale_hidden
+        self.Wx = np.random.randn(input_dim, self.units) * scale_input  # Input-to-hidden weights
         self.biases = np.zeros(self.units)
 
         self.d_weights = np.zeros_like(self.weights)
+        self.d_Wx = np.zeros_like(self.Wx)
         self.d_biases = np.zeros_like(self.biases)
 
         if self.optimizer:
             self._reg_params()
 
     def _reg_params(self):
+        """
+        Register parameters with the optimizer.
+        """
         self.optimizer.register_parameter(self.weights, 'weights')
+        self.optimizer.register_parameter(self.Wx, 'Wx')
         self.optimizer.register_parameter(self.biases, 'biases')
 
     def forward(self, inputs: np.ndarray, time_step_size: float = 0.1) -> np.ndarray:
+        """
+        Optimized forward pass for CTRNNLayer using Euler discretization.
+        """
         self.inputs = inputs
-        if self.weights is None:
+        if self.weights is None or self.Wx is None:
             self._initialize_weights(inputs.shape)
 
-        self.last_inputs = inputs
         batch_size, time_steps, input_dim = inputs.shape
-        self.state = np.zeros((batch_size, self.units))  # Initialize state
+        self.state = np.zeros((batch_size, self.units))
 
         for t in range(time_steps):
             external_input = inputs[:, t, :]
-            # Euler method for discretization
+            # Use Wx for input-to-hidden transformation
             d_state_dt = (1.0 / self.time_constants) * (
-                -self.state + np.matmul(self.activation_function(self.state), self.weights.T) + external_input + self.biases
+                -self.state + np.dot(self.activation_function(self.state), self.weights.T) +
+                np.dot(external_input, self.Wx) + self.biases
             )
-            self.state = self.state + time_step_size * d_state_dt
+            self.state += time_step_size * d_state_dt
 
-        return self.activation_function(self.state)  # Changed line: return only the last state
+        return self.activation_function(self.state)
 
     def backward(self, grad: np.ndarray) -> np.ndarray:
-        if self.weights is None:
+        """
+        Optimized backward pass for CTRNNLayer.
+        """
+        if self.weights is None or self.Wx is None:
             return np.zeros_like(self.inputs)
 
         batch_size, time_steps, input_dim = self.inputs.shape
-        d_weights = np.zeros_like(self.weights)
-        d_biases = np.zeros_like(self.biases)
+        d_input = np.zeros_like(self.inputs)
+        d_state_next = np.zeros_like(self.state)
 
-        if self.state is None or self.state.shape[0] != batch_size:
-            self.state = np.zeros((batch_size, self.units))
+        self.d_weights.fill(0)
+        self.d_Wx.fill(0)
+        self.d_biases.fill(0)
 
-        d_state_next = np.zeros_like(self.state)  # Initialize d_state_next
+        # Expand grad to match time-step format if return_sequences is False
+        if not self.return_sequences:
+            grad_expanded = np.zeros((batch_size, time_steps, self.units))
+            grad_expanded[:, -1, :] = grad
+            grad = grad_expanded
 
         for t in reversed(range(time_steps)):
-            external_input = self.last_inputs[:, t, :]
-            state_t = self.state
+            external_input = self.inputs[:, t, :]
+            activation_derivative = derivative(self.activation_function, self.state)
 
-            # 1. Derivative of activation
-            activation_derivative = derivative(self.activation_function, state_t)
-
-            # 2. Gradient from the next time step
-            d_h = grad[:, t, :] + d_state_next if self.return_sequences else grad + d_state_next
-
-            # 3. Calculate intermediate gradients
+            d_h = grad[:, t, :] + d_state_next
             d_state_raw = d_h * activation_derivative
 
-            # Gradients for weights and biases (accumulate)
-            d_weights += np.matmul(d_state_raw.T, state_t).T
-            d_biases += np.sum(d_state_raw, axis=0)
+            self.d_weights += np.dot(self.state.T, d_state_raw)
+            self.d_Wx += np.dot(external_input.T, d_state_raw)
+            self.d_biases += np.sum(d_state_raw, axis=0)
 
-            # 4. Gradient for the previous state (simplified Euler-like step)
-            d_state_prev = (d_state_raw @ self.weights) - (d_state_raw * (1.0 / self.time_constants))
-            d_state_next = d_state_prev
+            d_state_next = np.dot(d_state_raw, self.weights) - (d_state_raw / self.time_constants)
+            d_input[:, t, :] = np.dot(d_state_raw, self.Wx.T)
 
-        self.d_weights = d_weights
-        self.d_biases = d_biases
-        return np.zeros_like(self.inputs)
+        return d_input
     
     def update(self):
         if self.optimizer and self.trainable:
@@ -922,15 +926,19 @@ class CTRNNLayer(RecurrentLayer):
             self.optimizer.update(params_and_grads)
             # Reset gradients
             self.d_weights = np.zeros_like(self.weights)
+            self.d_Wx = np.zeros_like(self.Wx)
             self.d_biases = np.zeros_like(self.biases)
 
     def _step(self, input_at_t: np.ndarray) -> np.ndarray:
         raise NotImplementedError("CTRNNLayer does not use a discrete _step method.")
 
     def _get_params_and_grads(self) -> List[Tuple[np.ndarray, np.ndarray]]:
-        # Returning None for gradients as the backward pass is not fully implemented
+        """
+        Return parameters and their gradients.
+        """
         return [
             (self.weights, self.d_weights),
+            (self.Wx, self.d_Wx),
             (self.biases, self.d_biases)
         ]
 
@@ -938,4 +946,5 @@ class CTRNNLayer(RecurrentLayer):
         super()._init_optimizer(optimizer)
         if optimizer:
             optimizer.register_parameter(self.weights, 'weights')
+            optimizer.register_parameter(self.Wx, 'Wx')
             optimizer.register_parameter(self.biases, 'biases')

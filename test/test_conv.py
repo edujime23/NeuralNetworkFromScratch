@@ -21,13 +21,13 @@ from network.utils.callbacks import Callback
 
 
 # --- Configuration ---
-IMG_SIZE = 32
+IMG_SIZE = 16
 CHANNELS = 1
 NUM_CLASSES = 1 # Binary classification (0: circle, 1: square)
 NUM_SAMPLES = 1000
 BATCH_SIZE = 32
 EPOCHS = 10000
-LEARNING_RATE = 1e-4
+LEARNING_RATE = 1e-3
 PLOT_UPDATE_FREQ = 1 # Update plot every N epochs
 FEATURE_MAPS_TO_SHOW = 2 # How many feature maps to visualize
 
@@ -36,23 +36,23 @@ def generate_shape_data(num_samples, img_size, channels):
     """Generates images with circles or squares."""
     images = np.zeros((num_samples, img_size, img_size, channels), dtype=np.float32)
     labels = np.zeros((num_samples, 1), dtype=np.float32)
-    padding = 4
+    padding = max(1, img_size // 10)  # Dynamically adjust padding based on image size
 
     for i in range(num_samples):
-        label = np.random.randint(0, 2) # 0 for circle, 1 for square
+        label = np.random.randint(0, 2)  # 0 for circle, 1 for square
         labels[i] = label
         center_x, center_y = np.random.randint(padding, img_size - padding, size=2)
-        size = np.random.randint(img_size // 4, img_size // 2 - padding)
+        size = np.random.randint(img_size // 5, img_size // 2 - padding)  # Adjust size range dynamically
 
-        if label == 0: # Draw Circle
+        if label == 0:  # Draw Circle
             radius = size // 2
             y, x = np.ogrid[:img_size, :img_size]
             dist_from_center = np.sqrt((x - center_x)**2 + (y - center_y)**2)
             mask = dist_from_center <= radius
-        else: # Draw Square
+        else:  # Draw Square
             half_size = size // 2
-            x_start, x_end = center_x - half_size, center_x + half_size
-            y_start, y_end = center_y - half_size, center_y + half_size
+            x_start, x_end = max(0, center_x - half_size), min(img_size, center_x + half_size)
+            y_start, y_end = max(0, center_y - half_size), min(img_size, center_y + half_size)
             mask = np.zeros((img_size, img_size), dtype=bool)
             mask[y_start:y_end, x_start:x_end] = True
 

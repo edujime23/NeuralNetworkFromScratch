@@ -79,7 +79,7 @@ class LivePlotCallback(Callback):
                 self.last_put_time = current_time
 
 def func(x):
-    return np.sqrt(x)**6
+    return np.sqrt(abs(x))**6
 
 if __name__ == "__main__":
     # Using context manager to ensure clean process termination
