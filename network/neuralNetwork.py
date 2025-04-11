@@ -126,14 +126,16 @@ class NeuralNetwork:
                 weight_index += 1
 
     def _train_on_batch(self, x: np.ndarray, y: np.ndarray, batch_size: int, callbacks: Optional[List[Callback]]):
-        for i in range(0, len(x), batch_size):
-            batch_x = x[i:i + batch_size]
-            batch_y = y[i:i + batch_size]
-            batch_index = i // batch_size
+        num_batches = int(np.ceil(len(x) / batch_size))
+        for batch_index in range(num_batches):
+            batch_start = batch_index * batch_size
+            batch_end = batch_start + batch_size
+            batch_x = x[batch_start:batch_end]
+            batch_y = y[batch_start:batch_end]
             self._trigger_callbacks(callbacks, 'on_batch_begin', batch_index)
             self._train_step(batch_x, batch_y)
-            self._trigger_callbacks_with_info(callbacks, 'on_batch_end_with_info', batch_index, network=self) # Pass the network instance
-            self._trigger_callbacks(callbacks, 'on_batch_end', batch_index) # Keep the original on_batch_end for other purposes
+            self._trigger_callbacks_with_info(callbacks, 'on_batch_end_with_info', batch_index, network=self)
+            self._trigger_callbacks(callbacks, 'on_batch_end', batch_index)
 
     def _train_step(self, x: np.ndarray, y: np.ndarray):
         self._trigger_callbacks(self.callbacks, 'on_batch_start')
@@ -141,12 +143,8 @@ class NeuralNetwork:
         loss_value = np.mean(self.loss(outputs, y))
 
         # Calculate L1 and L2 regularization penalties
-        l1_penalty = 0.0
-        l2_penalty = 0.0
-        for layer in self.layers:
-            if hasattr(layer, 'weights'):
-                l1_penalty += np.sum(np.abs(layer.weights))
-                l2_penalty += np.sum(layer.weights ** 2)
+        l1_penalty = sum(np.sum(np.abs(layer.weights)) for layer in self.layers if hasattr(layer, 'weights'))
+        l2_penalty = sum(np.sum(layer.weights ** 2) for layer in self.layers if hasattr(layer, 'weights'))
 
         # Add regularization penalties to the loss
         loss_value += self.l1_lambda * l1_penalty

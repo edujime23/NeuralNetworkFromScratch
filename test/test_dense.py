@@ -96,12 +96,10 @@ if __name__ == "__main__":
     train_outputs = outputs
     
     layers = [
-        DenseLayer(64, activation_function=leaky_relu) for _ in range(8)
+        DenseLayer(16, activation_function=leaky_relu) for _ in range(4)
     ]
     
     layers.extend([
-        DenseLayer(64, activation_function=linear),
-        DenseLayer(64, activation_function=linear),
         DenseLayer(out_dims, activation_function=linear)
     ])
     
@@ -117,8 +115,8 @@ if __name__ == "__main__":
     sgd = SGD(learning_rate=1e-4, momentum=1/2, nesterov=True)
     rmsprop = RMSprop(learning_rate=1e-3, rho=0.9, gradient_clip=1)
     
-    nn = NeuralNetwork(layers, huber_loss, gradient_clip=None, l1_lambda=0, l2_lambda=0)
-    nn.compile(optimizer=adamW)
+    nn = NeuralNetwork(layers, mean_absolute_error, gradient_clip=None, l1_lambda=0, l2_lambda=0)
+    nn.compile(optimizer=amsgrad)
     
     # Create a multiprocessing Queue with limited size to avoid memory issues
     plot_queue = mp.Queue()  # Only keep latest few predictions
