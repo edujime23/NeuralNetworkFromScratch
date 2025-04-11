@@ -317,33 +317,6 @@ class NumericalDerivation:
                     f"Finite difference fallback also failed for argument index {idx}: {fd_err}"
                 ) from fd_err
 
-def _approximate_taylor(func: Callable, x0: float, degree: int, args: tuple = ()) -> np.ndarray:
-    """
-    Approximates the Taylor polynomial of a function at a given point using numerical differentiation.
-
-    Args:
-        func (Callable): The function to approximate.
-        x0 (float): The point at which to evaluate the Taylor series.
-        degree (int): The degree of the Taylor polynomial.
-        args (tuple, optional): Additional arguments to pass to the function. Defaults to ().
-
-    Returns:
-        np.ndarray: The coefficients of the Taylor polynomial, in order of increasing degree.
-    """
-    if degree < 0:
-        raise ValueError("Degree must be non-negative.")
-
-    x0_ld = np.longdouble(x0)
-    coeffs = np.zeros(degree + 1, dtype=np.longdouble)
-    deriv_instance = NumericalDerivation()
-
-    for i in range(degree + 1):
-        if i == 0:
-            coeffs[i] = func(x0_ld, *args)
-        else:
-            coeffs[i] = derivative(func, (x0_ld, *args), mode='derivative', arg_index=0, fd_order=max(i, 6)) / np.math.factorial(i)  # Use a reasonable fd_order
-    return coeffs
-
 def derivative(
     func: Callable,
     args: Union[list, tuple, float, int, np.ndarray],
