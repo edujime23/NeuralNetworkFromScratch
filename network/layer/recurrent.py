@@ -30,7 +30,7 @@ class SimpleRNNLayer(RecurrentLayer):
         scale = np.sqrt(1.0 / self.units)
         self.Wh = np.random.randn(self.units, self.units) * scale
         self.Wx = np.random.randn(input_dim, self.units) * scale
-        self.b = np.zeros(self.units, dtype=np.float64)
+        self.b = np.zeros(self.units)
         self.dWh = np.zeros_like(self.Wh)
         self.dWx = np.zeros_like(self.Wx)
         self.db = np.zeros_like(self.b)

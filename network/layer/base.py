@@ -43,6 +43,18 @@ class Layer:
             optimizer (Optimizer): The optimizer object to use.
         """
         self.optimizer = optimizer
+        
+    def _forward(self, inputs: np.ndarray) -> np.ndarray:
+        return self.forward(inputs)
+        
+    def _backward(self, grad: np.ndarray) -> np.ndarray:
+        return self.backward(grad)
+        
+    def forward(self, inputs: np.ndarray) -> np.ndarray:
+        raise NotImplementedError("Subclasses must implement the forward method.")
+    
+    def backward(self, grad: np.ndarray) -> np.ndarray:
+        raise NotImplementedError("Subclasses must implement the backward method.")
 
     def update(self) -> None:
         """Updates the parameters of the layer using the optimizer."""

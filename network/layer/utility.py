@@ -22,7 +22,7 @@ class MaxPoolingLayer(PoolingLayer):
         kh, kw = self.pool_size
         sh, sw = self.stride
         output_height, output_width, _ = self._get_output_shape((input_height, input_width, num_channels))
-        output = np.zeros((batch_size, output_height, output_width, num_channels), dtype=np.float64)
+        output = np.zeros((batch_size, output_height, output_width, num_channels))
         self.max_indices = np.zeros_like(inputs, dtype=bool)
 
         for b, c, i, j in itertools.product(range(batch_size), range(num_channels), range(output_height), range(output_width)):

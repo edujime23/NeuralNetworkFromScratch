@@ -10,7 +10,7 @@ class SGD(Optimizer):
         
     def _initialize_param_state(self, param: np.ndarray, name: str, param_id: int):
         if 'velocity' not in self.param_states[param_id]:
-            self.param_states[param_id]['velocity'] = np.zeros_like(param, dtype=np.float64)
+            self.param_states[param_id]['velocity'] = np.zeros_like(param)
             
     def _update_single_param(self, param: np.ndarray, grad: np.ndarray, lr: float):
         param_id = id(param)

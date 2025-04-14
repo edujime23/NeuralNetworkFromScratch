@@ -9,13 +9,13 @@ class NumericalDerivation:
     with Richardson extrapolation.
     """
 
-    _DEFAULT_COMPLEX_H_LD = np.longdouble(np.finfo(np.longdouble).eps**0.5)
+    _DEFAULT_COMPLEX_H_f64 = np.float64(np.finfo(np.float64).eps**0.5)
     _MAX_FD_ORDER = 20  # Maximum finite difference order
     _DEFAULT_FD_ORDER = 10
     _FD_COEFFS_STORAGE: dict = {}  # Store precomputed FD coefficients
     _FD_STEPS_STORAGE: dict = {}
-    _DEFAULT_FD_BASE_DX_LD = np.longdouble(1e-4)
-    _RICHARDSON_RATIO_LD = np.longdouble(2.0)
+    _DEFAULT_FD_BASE_DX_f64 = np.float64(1e-4)
+    _RICHARDSON_RATIO_f64 = np.float64(2.0)
     _DEFAULT_TAYLOR_TERMS = 8
     _RICHARDSON_EXTRAPOLATION_STEPS = 4  # Number of steps for Richardson extrapolation
 
@@ -28,35 +28,35 @@ class NumericalDerivation:
             richardson_ratio (float, optional): The ratio used for Richardson extrapolation. Defaults to 2.0.
         """
         self.taylor_terms = taylor_terms
-        self._RICHARDSON_RATIO_LD = np.longdouble(richardson_ratio)
+        self._RICHARDSON_RATIO_f64 = np.float64(richardson_ratio)
 
     @staticmethod
-    def _ensure_longdouble_tuple(args_in: Union[list, tuple, float, int, np.ndarray]) -> Tuple[np.ndarray, ...]:
-        """Ensures arguments are longdouble numpy arrays."""
+    def _ensure_float64_tuple(args_in: Union[list, tuple, float, int, np.ndarray]) -> Tuple[np.ndarray, ...]:
+        """Ensures arguments are float64 numpy arrays."""
         if not isinstance(args_in, tuple):
             args_in = (args_in,)
         if not args_in:
             raise ValueError("At least one argument required for the function.")
         try:
-            return tuple(np.asarray(arg, dtype=np.longdouble) for arg in args_in)
+            return tuple(np.asarray(arg) for arg in args_in)
         except Exception as e:
-            raise TypeError(f"Cannot convert all arguments to numpy longdouble: {e}") from e
+            raise TypeError(f"Cannot convert all arguments to numpy float64: {e}") from e
 
     @staticmethod
     def _complex_diff(
         func: Callable,
         args_f128: Tuple[np.ndarray, ...],
         idx: int,
-        complex_h_ld: np.longdouble
+        complex_h_f64: np.float64
     ) -> np.ndarray:
         """Computes derivative using complex step differentiation."""
-        if complex_h_ld <= 0:
+        if complex_h_f64 <= 0:
             raise ValueError("Complex step h must be positive.")
 
         args_complex = list(args_f128)
         original_arg = args_f128[idx]
 
-        complex_h_f128 = np.longdouble(complex_h_ld)
+        complex_h_f128 = np.float64(complex_h_f64)
         complex_perturbation = np.complex128(1j * complex_h_f128)
 
         complex_arg = original_arg.astype(np.complex128, copy=True)
@@ -82,7 +82,7 @@ class NumericalDerivation:
         deriv = np.imag(result_complex) / complex_h_f128
         if np.isnan(deriv).any() or np.isinf(deriv).any():
             raise ValueError("Complex step resulted in NaN or Inf for argument index {idx}.")
-        return np.asarray(deriv, dtype=np.longdouble)
+        return np.asarray(deriv)
 
     @staticmethod
     def _get_fd_coeffs_and_steps(order: int) -> Tuple[np.ndarray, np.ndarray]:
@@ -94,7 +94,7 @@ class NumericalDerivation:
 
         Returns:
             Tuple[np.ndarray, np.ndarray]: A tuple containing the coefficients and steps
-            as longdouble numpy arrays.
+            as float64 numpy arrays.
 
         Raises:
             ValueError: If the order is not an even integer or exceeds the maximum allowed order.
@@ -105,9 +105,9 @@ class NumericalDerivation:
 
             num_points = order + 1
             half_order = order // 2
-            steps = np.arange(-half_order, half_order + 1, dtype=np.longdouble)
-            A = np.vander(steps, num_points, increasing=True).T.astype(np.longdouble) # Explicitly cast to longdouble
-            b = np.zeros(num_points, dtype=np.longdouble)
+            steps = np.arange(-half_order, half_order + 1)
+            A = np.vander(steps, num_points, increasing=True).T
+            b = np.zeros(num_points)
             b[1] = 1.0  # First derivative
             coeffs = np.linalg.solve(A, b)
             NumericalDerivation._FD_COEFFS_STORAGE[order] = coeffs
@@ -122,8 +122,7 @@ class NumericalDerivation:
         func: Callable,
         args_f128: Tuple[np.ndarray, ...],
         idx: int,
-        h_ld: np.longdouble,
-        func_accepts_ld: bool,
+        h_f64: np.float64,
         order: int
     ) -> np.ndarray:
         """
@@ -132,10 +131,9 @@ class NumericalDerivation:
 
         Args:
             func (Callable): The function to differentiate.
-            args_f128 (Tuple[np.ndarray, ...]): The arguments to the function as longdouble arrays.
+            args_f128 (Tuple[np.ndarray, ...]): The arguments to the function as float64 arrays.
             idx (int): The index of the argument with respect to which the derivative is taken.
-            h_ld (np.longdouble): The step size.
-            func_accepts_ld (bool): Flag indicating if the user function accepts longdouble.
+            h_f64 (np.float64): The step size.
             order (int): The order of the finite difference approximation (even).
 
         Returns:
@@ -144,62 +142,61 @@ class NumericalDerivation:
         Raises:
             ValueError: If the step size is not positive.
             RuntimeError: If the user-provided function fails during evaluation.
-            TypeError: If the function result cannot be converted to a longdouble numpy array.
+            TypeError: If the function result cannot be converted to a float64 numpy array.
         """
-        if h_ld <= 0:
+        if h_f64 <= 0:
             raise ValueError("Finite difference step h must be positive.")
 
-        args_list_ld = [np.asarray(arg, dtype=np.longdouble) for arg in args_f128]
-        original_arg_ld = args_list_ld[idx]
+        args_list_f64 = [np.asarray(arg) for arg in args_f128]
+        original_arg_f64 = args_list_f64[idx]
 
         # Adaptive step size adjustment
-        magnitude_ld = np.mean(np.abs(original_arg_ld)) if isinstance(original_arg_ld, np.ndarray) and original_arg_ld.size > 0 else np.abs(original_arg_ld)
-        magnitude_ld = max(magnitude_ld, np.longdouble(1.0))  # Ensure magnitude is not zero
-        scale_factor = max(np.longdouble(1e-8), min(np.longdouble(1e8), magnitude_ld))
-        adj_h_ld = h_ld * scale_factor
-        min_allowable_h = np.finfo(np.longdouble).eps * np.longdouble(1000.0) * (np.longdouble(1.0) + magnitude_ld)
-        adj_h_ld = max(adj_h_ld, min_allowable_h)
+        magnitude_f64 = np.mean(np.abs(original_arg_f64)) if isinstance(original_arg_f64, np.ndarray) and original_arg_f64.size > 0 else np.abs(original_arg_f64)
+        magnitude_f64 = max(magnitude_f64, np.float64(1.0))  # Ensure magnitude is not zero
+        scale_factor = max(np.float64(1e-8), min(np.float64(1e8), magnitude_f64))
+        adj_h_f64 = h_f64 * scale_factor
+        min_allowable_h = np.finfo(np.float64).eps * np.float64(1000.0) * (np.float64(1.0) + magnitude_f64)
+        adj_h_f64 = max(adj_h_f64, min_allowable_h)
 
         # Get FD coefficients and steps
-        coeffs_ld, steps_ld = NumericalDerivation._get_fd_coeffs_and_steps(order)
-        coeffs_ld = coeffs_ld / adj_h_ld
-        steps_ld = steps_ld * adj_h_ld
-        deriv_sum_ld = np.longdouble(0.0)
-        result_dtype = np.longdouble
+        coeffs_f64, steps_f64 = NumericalDerivation._get_fd_coeffs_and_steps(order)
+        coeffs_f64 = coeffs_f64 / adj_h_f64
+        steps_f64 = steps_f64 * adj_h_f64
+        deriv_sum_f64 = np.float64(0.0)
+        result_dtype = np.float64
 
-        for i, step_ld in enumerate(steps_ld):
-            if coeffs_ld[i] == 0:
+        for i, step_f64 in enumerate(steps_f64):
+            if coeffs_f64[i] == 0:
                 continue
 
-            temp_args_ld = list(args_list_ld)
-            temp_args_ld[idx] = original_arg_ld + step_ld
+            temp_args_f64 = list(args_list_f64)
+            temp_args_f64[idx] = original_arg_f64 + step_f64
 
-            call_dtype = np.longdouble
+            call_dtype = np.float64
             try:
-                temp_args_call = tuple(np.asarray(arg, dtype=call_dtype) for arg in temp_args_ld)
+                temp_args_call = tuple(np.asarray(arg, dtype=call_dtype) for arg in temp_args_f64)
                 func_eval = func(*temp_args_call)
             except Exception as e:
                 raise RuntimeError(f"User function failed during FD evaluation with args {temp_args_call} (dtype {call_dtype}) for argument index {idx}: {e}") from e
 
             try:
-                func_eval_ld = np.asarray(func_eval, dtype=result_dtype)
+                func_eval_f64 = np.asarray(func_eval, dtype=result_dtype)
                 if i == 0:
-                    deriv_sum_ld = np.zeros_like(func_eval_ld, dtype=result_dtype)
+                    deriv_sum_f64 = np.zeros_like(func_eval_f64, dtype=result_dtype)
             except Exception as e:
                 raise TypeError(
                     f"Function result could not be converted to {result_dtype.__name__} numpy array for argument index {idx}. "
                     f"Got type: {type(func_eval)}. Error: {e}"
                 ) from e
-            deriv_sum_ld += coeffs_ld[i] * func_eval_ld
-        return deriv_sum_ld
+            deriv_sum_f64 += coeffs_f64[i] * func_eval_f64
+        return deriv_sum_f64
 
     def _finite_diff_richardson(
         self,
         func: Callable,
         args_f128: Tuple[np.ndarray, ...],
         idx: int,
-        base_h_ld: np.longdouble,
-        func_accepts_ld: bool,
+        base_h_f64: np.float64,
         return_error: bool,
         order: int
     ) -> Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]:
@@ -210,8 +207,7 @@ class NumericalDerivation:
             func (Callable): The function to differentiate.
             args_f128 (Tuple[np.ndarray, ...]): The arguments to the function.
             idx (int): The index of the argument.
-            base_h_ld (np.longdouble): The base step size.
-            func_accepts_ld (bool): Whether the function accepts longdouble.
+            base_h_f64 (np.float64): The base step size.
             return_error (bool): Whether to return error estimates.
             order (int): The order of the finite difference approximation.
 
@@ -219,51 +215,51 @@ class NumericalDerivation:
             Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]: Derivative or (derivative, error).
         """
         num_extrap = self._RICHARDSON_EXTRAPOLATION_STEPS
-        richardson_ratio = self._RICHARDSON_RATIO_LD
-        h_steps_ld = [base_h_ld / (richardson_ratio**k) for k in range(num_extrap)]
+        richardson_ratio = self._RICHARDSON_RATIO_f64
+        h_steps_f64 = [base_h_f64 / (richardson_ratio**k) for k in range(num_extrap)]
         powers_r = [richardson_ratio**(order + 2 * (k - 1)) for k in range(1, num_extrap)]
 
-        d_estimates_ld = [
-            NumericalDerivation._central_diff_single_h(func, args_f128, idx, h_ld, func_accepts_ld, order)
-            for h_ld in h_steps_ld
+        d_estimates_f64 = [
+            NumericalDerivation._central_diff_single_h(func, args_f128, idx, h_f64, order)
+            for h_f64 in h_steps_f64
         ]
 
-        T = list(d_estimates_ld)
+        T = list(d_estimates_f64)
         p = order
 
         for k in range(1, num_extrap):
             power_r_p_k = powers_r[k - 1]
-            denom = power_r_p_k - np.longdouble(1.0)
-            if abs(denom) < np.finfo(np.longdouble).tiny:
+            denom = power_r_p_k - np.float64(1.0)
+            if abs(denom) < np.finfo(np.float64).tiny:
                 warnings.warn(f"Richardson extrapolation denominator near zero at level {k} for argument index {idx}.", RuntimeWarning)
-                denom = np.sign(denom) * np.finfo(np.longdouble).tiny if denom != 0 else np.finfo(np.longdouble).tiny
+                denom = np.sign(denom) * np.finfo(np.float64).tiny if denom != 0 else np.finfo(np.float64).tiny
 
             for i in range(num_extrap - k):
                 T[i] = (power_r_p_k * T[i + 1] - T[i]) / denom
 
-        final_extrap_ld = T[0]
+        final_extrap_f64 = T[0]
 
-        error_est_ld = None
+        error_est_f64 = None
         if return_error:
             if num_extrap >= 2:
-                second_best_ld = d_estimates_ld[0]
-                T_prev = list(d_estimates_ld)
+                second_best_f64 = d_estimates_f64[0]
+                T_prev = list(d_estimates_f64)
                 for k_prev in range(1, num_extrap - 1):
                     power_r_p_k_prev = powers_r[k_prev - 1]
-                    denom_prev = power_r_p_k_prev - np.longdouble(1.0)
-                    if abs(denom_prev) < np.finfo(np.longdouble).tiny:
-                        denom_prev = np.finfo(np.longdouble).tiny
+                    denom_prev = power_r_p_k_prev - np.float64(1.0)
+                    if abs(denom_prev) < np.finfo(np.float64).tiny:
+                        denom_prev = np.finfo(np.float64).tiny
                     for i_prev in range(num_extrap - k_prev):
                         T_prev[i_prev] = (power_r_p_k_prev * T_prev[i_prev + 1] - T_prev[i_prev]) / denom_prev
-                second_best_ld = T_prev[0]
-                error_est_ld = np.abs(final_extrap_ld - second_best_ld)
+                second_best_f64 = T_prev[0]
+                error_est_f64 = np.abs(final_extrap_f64 - second_best_f64)
             else:
-                error_est_ld = np.full_like(final_extrap_ld, np.nan, dtype=np.longdouble)
+                error_est_f64 = np.full_like(final_extrap_f64, np.nan)
 
-        final_result_f128 = np.asarray(final_extrap_ld, dtype=np.longdouble)
+        final_result_f128 = np.asarray(final_extrap_f64)
         if not return_error:
             return final_result_f128
-        error_est_f128 = np.asarray(error_est_ld, dtype=np.longdouble)
+        error_est_f128 = np.asarray(error_est_f64)
         return final_result_f128, error_est_f128
 
     def _get_single_partial(
@@ -271,9 +267,8 @@ class NumericalDerivation:
         func: Callable,
         args_f128: Tuple[np.ndarray, ...],
         idx: int,
-        complex_h_ld: np.longdouble,
-        base_fd_h_ld: np.longdouble,
-        func_accepts_ld: bool,
+        complex_h_f64: np.float64,
+        base_fd_h_f64: np.float64,
         return_error: bool,
         order: int
     ) -> Union[np.ndarray, Tuple[np.ndarray, Optional[np.ndarray]]]:
@@ -285,9 +280,8 @@ class NumericalDerivation:
             func (Callable): The function to differentiate.
             args_f128 (Tuple[np.ndarray, ...]): The arguments to the function.
             idx (int): The index of the argument.
-            complex_h_ld (np.longdouble): The step size for complex step differentiation.
-            base_fd_h_ld (np.longdouble): The base step size for finite difference.
-            func_accepts_ld (bool): Whether the function accepts longdouble.
+            complex_h_f64 (np.float64): The step size for complex step differentiation.
+            base_fd_h_f64 (np.float64): The base step size for finite difference.
             return_error (bool): Whether to return an error estimate.
             order (int): The order of the finite difference approximation.
 
@@ -299,7 +293,7 @@ class NumericalDerivation:
             RuntimeError: If both complex step and finite difference methods fail.
         """
         try:
-            result_f128 = NumericalDerivation._complex_diff(func, args_f128, idx, complex_h_ld)
+            result_f128 = NumericalDerivation._complex_diff(func, args_f128, idx, complex_h_f64)
             return (result_f128, None) if return_error else result_f128
         except Exception as complex_err:
             warnings.warn(
@@ -310,7 +304,7 @@ class NumericalDerivation:
             try:
                 return self._finite_diff_richardson(
                     func, args_f128, idx,
-                    base_fd_h_ld, func_accepts_ld, return_error, order
+                    base_fd_h_f64, return_error, order
                 )
             except Exception as fd_err:
                 raise RuntimeError(
@@ -324,7 +318,6 @@ def derivative(
     arg_index: Optional[int] = 0,
     complex_step_h: Optional[Union[float, Dict[int, float]]] = None,
     fd_base_dx: Optional[Union[float, Dict[int, float]]] = None,
-    func_accepts_longdouble: bool = False,
     return_error_estimate: bool = False,
     fd_order: Optional[int] = None,
     richardson_extrapolation_steps: Optional[int] = None,
@@ -350,7 +343,6 @@ def derivative(
         fd_base_dx (Optional[Union[float, Dict[int, float]]], optional): Base step size for finite difference fallback.
             Can be a float for a uniform step size, or a dictionary where keys are argument indices and values are step sizes.
             Defaults to 1e-4.
-        func_accepts_longdouble (bool, optional): Whether function accepts longdouble inputs. Defaults to False.
         return_error_estimate (bool, optional): Whether to return error estimates. Defaults to False.
         fd_order (Optional[int], optional): The order of the finite difference approximation.
             Must be an even integer. Defaults to 10.
@@ -376,7 +368,7 @@ def derivative(
     if not callable(func):
         raise TypeError("`func` must be a callable function.")
 
-    args_f128 = NumericalDerivation._ensure_longdouble_tuple(args)
+    args_f128 = NumericalDerivation._ensure_float64_tuple(args)
     num_args = len(args_f128)
 
     valid_modes = ['derivative', 'gradient', 'jacobian', 'sum_partials']
@@ -391,29 +383,29 @@ def derivative(
     elif arg_index != 0:
         warnings.warn(f"arg_index={arg_index} is ignored when mode='{mode}'.", UserWarning)
 
-    current_complex_h_ld = {}
+    current_complex_h_f64 = {}
     if isinstance(complex_step_h, dict):
-        current_complex_h_ld = {k: np.longdouble(v) for k, v in complex_step_h.items()}
+        current_complex_h_f64 = {k: np.float64(v) for k, v in complex_step_h.items()}
     elif complex_step_h is not None:
-        current_complex_h_ld = {i: np.longdouble(complex_step_h) for i in range(num_args)}
+        current_complex_h_f64 = {i: np.float64(complex_step_h) for i in range(num_args)}
     else:
-        current_complex_h_ld = {i: NumericalDerivation._DEFAULT_COMPLEX_H_LD for i in range(num_args)}
+        current_complex_h_f64 = {i: NumericalDerivation._DEFAULT_COMPLEX_H_f64 for i in range(num_args)}
 
-    current_fd_base_dx_ld = {}
+    current_fd_base_dx_f64 = {}
     if isinstance(fd_base_dx, dict):
-        current_fd_base_dx_ld = {k: np.longdouble(v) for k, v in fd_base_dx.items()}
+        current_fd_base_dx_f64 = {k: np.float64(v) for k, v in fd_base_dx.items()}
     elif fd_base_dx is not None:
-        current_fd_base_dx_ld = {i: np.longdouble(fd_base_dx) for i in range(num_args)}
+        current_fd_base_dx_f64 = {i: np.float64(fd_base_dx) for i in range(num_args)}
     else:
-        current_fd_base_dx_ld = {i: NumericalDerivation._DEFAULT_FD_BASE_DX_LD for i in range(num_args)}
+        current_fd_base_dx_f64 = {i: NumericalDerivation._DEFAULT_FD_BASE_DX_f64 for i in range(num_args)}
 
     fd_order_val = fd_order if fd_order is not None else NumericalDerivation._DEFAULT_FD_ORDER
     richardson_steps = richardson_extrapolation_steps if richardson_extrapolation_steps is not None else NumericalDerivation._RICHARDSON_EXTRAPOLATION_STEPS
     current_richardson_ratio = richardson_ratio if richardson_ratio is not None else 2.0
 
-    if any(h <= 0 for h in current_complex_h_ld.values()):
+    if any(h <= 0 for h in current_complex_h_f64.values()):
         raise ValueError("complex_step_h values must be positive.")
-    if any(dx <= 0 for dx in current_fd_base_dx_ld.values()):
+    if any(dx <= 0 for dx in current_fd_base_dx_f64.values()):
         raise ValueError("fd_base_dx values must be positive.")
     if richardson_steps < 2 and return_error_estimate:
         warnings.warn("Richardson extrapolation requires at least 2 steps for error estimation. Error estimates will be NaN.", RuntimeWarning)
@@ -427,12 +419,12 @@ def derivative(
     final_error: Optional[np.ndarray] = None
 
     if mode == 'derivative':
-        h_ld = current_complex_h_ld.get(arg_index, NumericalDerivation._DEFAULT_COMPLEX_H_LD)
-        base_dx_ld = current_fd_base_dx_ld.get(arg_index, NumericalDerivation._DEFAULT_FD_BASE_DX_LD)
+        h_f64 = current_complex_h_f64.get(arg_index, NumericalDerivation._DEFAULT_COMPLEX_H_f64)
+        base_dx_f64 = current_fd_base_dx_f64.get(arg_index, NumericalDerivation._DEFAULT_FD_BASE_DX_f64)
         result_or_tuple = deriv_instance._get_single_partial(
             func, args_f128, arg_index,
-            h_ld, base_dx_ld,
-            func_accepts_longdouble, return_error_estimate, fd_order_val
+            h_f64, base_dx_f64, 
+            return_error_estimate, fd_order_val
         )
         if return_error_estimate:
             final_result, final_error = result_or_tuple
@@ -440,41 +432,41 @@ def derivative(
             final_result = result_or_tuple
 
     elif mode == 'sum_partials':
-        total_deriv_ld = np.zeros_like(func(*args_f128), dtype=np.longdouble)
-        total_error_ld = np.zeros_like(func(*args_f128), dtype=np.longdouble) if return_error_estimate else None
+        total_deriv_f64 = np.zeros_like(func(*args_f128))
+        total_error_f64 = np.zeros_like(func(*args_f128)) if return_error_estimate else None
         any_fd_used = False
 
         for i in range(num_args):
-            h_ld = current_complex_h_ld.get(i, NumericalDerivation._DEFAULT_COMPLEX_H_LD)
-            base_dx_ld = current_fd_base_dx_ld.get(i, NumericalDerivation._DEFAULT_FD_BASE_DX_LD)
+            h_f64 = current_complex_h_f64.get(i, NumericalDerivation._DEFAULT_COMPLEX_H_f64)
+            base_dx_f64 = current_fd_base_dx_f64.get(i, NumericalDerivation._DEFAULT_FD_BASE_DX_f64)
             res_or_tup = deriv_instance._get_single_partial(
                 func, args_f128, i,
-                h_ld, base_dx_ld,
-                func_accepts_longdouble, return_error_estimate, fd_order_val
+                h_f64, base_dx_f64,
+                func_accepts_float64, return_error_estimate, fd_order_val
             )
             if return_error_estimate:
                 partial_f128, error_f128 = res_or_tup
-                total_deriv_ld += np.asarray(partial_f128, dtype=np.longdouble)
+                total_deriv_f64 += np.asarray(partial_f128)
                 if error_f128 is not None:
-                    total_error_ld += np.asarray(error_f128, dtype=np.longdouble)
+                    total_error_f64 += np.asarray(error_f128)
                     any_fd_used = True
             else:
                 partial_f128 = res_or_tup
-                total_deriv_ld += np.asarray(partial_f128, dtype=np.longdouble)
+                total_deriv_f64 += np.asarray(partial_f128)
 
-        final_result = total_deriv_ld
+        final_result = total_deriv_f64
         if return_error_estimate:
-            final_error = total_error_ld if any_fd_used else np.full_like(final_result, np.nan, dtype=np.longdouble)
+            final_error = total_error_f64 if any_fd_used else np.full_like(final_result, np.nan)
 
     elif mode in ['gradient', 'jacobian']:
         any_fd_used_for_error = False
         for i in range(num_args):
-            h_ld = current_complex_h_ld.get(i, NumericalDerivation._DEFAULT_COMPLEX_H_LD)
-            base_dx_ld = current_fd_base_dx_ld.get(i, NumericalDerivation._DEFAULT_FD_BASE_DX_LD)
+            h_f64 = current_complex_h_f64.get(i, NumericalDerivation._DEFAULT_COMPLEX_H_f64)
+            base_dx_f64 = current_fd_base_dx_f64.get(i, NumericalDerivation._DEFAULT_FD_BASE_DX_f64)
             res_or_tup = deriv_instance._get_single_partial(
                 func, args_f128, i,
-                h_ld, base_dx_ld,
-                func_accepts_longdouble, return_error_estimate, fd_order_val
+                h_f64, base_dx_f64,
+                func_accepts_float64, return_error_estimate, fd_order_val
             )
             if return_error_estimate:
                 partial_res, partial_err = res_or_tup
@@ -502,9 +494,9 @@ def derivative(
                 processed_errors = []
                 for res, err in zip(results_list, errors_list):
                     if err is None:
-                        processed_errors.append(np.full_like(res, np.nan, dtype=np.longdouble))
+                        processed_errors.append(np.full_like(res, np.nan))
                     else:
-                        processed_errors.append(np.asarray(err, dtype=np.longdouble))
+                        processed_errors.append(np.asarray(err))
 
                 try:
                     final_error = np.stack(processed_errors, axis=stack_axis)
@@ -512,9 +504,9 @@ def derivative(
                     warnings.warn(
                         f"Could not stack error estimates for {mode} due to inconsistent shapes after NaN padding.",
                         RuntimeWarning)
-                    final_error = np.full_like(final_result, np.nan, dtype=np.longdouble)
+                    final_error = np.full_like(final_result, np.nan)
             else:
-                final_error = np.full_like(final_result, np.nan, dtype=np.longdouble)
+                final_error = np.full_like(final_result, np.nan)
 
     if final_result is None:
         raise RuntimeError("Internal error: final_result was not computed.")
@@ -522,7 +514,7 @@ def derivative(
     if not return_error_estimate:
         return np.asarray(final_result)
     if final_error is None:
-        final_error = np.full_like(final_result, np.nan, dtype=np.longdouble)
+        final_error = np.full_like(final_result, np.nan)
     elif final_error.shape != final_result.shape:
         warnings.warn(
             f"Result shape {final_result.shape} and error shape {final_error.shape} mismatch. Broadcasting error.",
@@ -530,6 +522,6 @@ def derivative(
         try:
             final_error = np.broadcast_to(final_error, final_result.shape).copy()
         except ValueError:
-            final_error = np.full_like(final_result, np.nan, dtype=np.longdouble)
+            final_error = np.full_like(final_result, np.nan)
 
     return np.asarray(final_result), final_error

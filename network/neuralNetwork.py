@@ -47,9 +47,8 @@ class NeuralNetwork:
         if not self._is_compiled:
             raise RuntimeError("The model must be compiled before training.")
 
-        # Ensure inputs and targets are float64
-        x = np.asarray(x, dtype=np.float64)
-        y = np.asarray(y, dtype=np.float64)
+        x = np.asarray(x)
+        y = np.asarray(y)
 
         best_val_loss = float('inf')
         best_model_weights = None
@@ -57,8 +56,8 @@ class NeuralNetwork:
         self.callbacks = callbacks or []  # Store callbacks in the instance
 
         if validation_data:
-            val_x = np.asarray(validation_data[0], dtype=np.float64)
-            val_y = np.asarray(validation_data[1], dtype=np.float64)
+            val_x = np.asarray(validation_data[0])
+            val_y = np.asarray(validation_data[1])
             validation_data = (val_x, val_y)
 
         self._trigger_callbacks(self.callbacks, 'on_train_begin')
@@ -162,7 +161,7 @@ class NeuralNetwork:
         self._trigger_callbacks(self.callbacks, 'on_forward_pass_begin', inputs=inputs)
         for layer in self.layers:
             self._trigger_callbacks(self.callbacks, 'on_forward_layer_begin', layer=layer, input_data=inputs)
-            inputs = layer.forward(inputs)
+            inputs = layer._forward(inputs)
             self._trigger_callbacks(self.callbacks, 'on_forward_layer_end', layer=layer, output_data=inputs)
         self._trigger_callbacks(self.callbacks, 'on_forward_pass_end', output=inputs)
         return inputs
@@ -174,7 +173,7 @@ class NeuralNetwork:
         self._trigger_callbacks(self.callbacks, 'on_backward_output_gradient', gradient=grad)
         for layer in reversed(self.layers):
             self._trigger_callbacks(self.callbacks, 'on_backward_layer_begin', layer=layer, input_gradient=grad)
-            grad = layer.backward(grad)
+            grad = layer._backward(grad)
             self._trigger_callbacks(self.callbacks, 'on_backward_layer_end', layer=layer, output_gradient=grad)
 
     def _get_logs(self, x: np.ndarray, y: np.ndarray, validation_data: Optional[Tuple[np.ndarray, np.ndarray]]) -> dict:
@@ -211,7 +210,7 @@ class NeuralNetwork:
         return logs
 
     def predict(self, x: np.ndarray) -> np.ndarray:
-        return self._forward_pass(np.array(x, dtype=np.float64))
+        return self._forward_pass(np.array(x))
 
     def save(self, filepath: str):
         params = {}
