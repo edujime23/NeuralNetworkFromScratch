@@ -34,7 +34,7 @@ class Adam(Optimizer):
         v_hat = v_new / (1 - np.power(self.beta2, self.t))
 
         # Calculate update
-        update = m_hat / (np.sqrt(v_hat) + self.epsilon)
+        update: np.ndarray = m_hat / (np.sqrt(v_hat) + self.epsilon)
 
         # Apply weight decay
         if self.weight_decay != 0:

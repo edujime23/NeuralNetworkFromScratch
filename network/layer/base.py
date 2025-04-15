@@ -2,7 +2,7 @@ import numpy as np
 from typing import Optional, Callable, List, Tuple, Union
 from ..optimizer import Optimizer
 from ..functions import linear
-from inspect import signature
+from ..functions import derivative
 
 class Layer:
     """
@@ -35,6 +35,7 @@ class Layer:
         self.signals = None 
         self.inputs = None
         self.optimizer: Optional[Optimizer] = None
+        self.use_complex = False
 
     def _init_optimizer(self, optimizer: Optimizer):
         """Initializes the optimizer for the layer.
@@ -42,6 +43,8 @@ class Layer:
         Args:
             optimizer (Optimizer): The optimizer object to use.
         """
+        optimizer.use_complex = self.use_complex
+        
         self.optimizer = optimizer
         
     def _forward(self, inputs: np.ndarray) -> np.ndarray:

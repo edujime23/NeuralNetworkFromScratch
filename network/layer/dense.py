@@ -39,6 +39,14 @@ class DenseLayer(Layer):
         scale = np.sqrt(2.0 / self.num_inputs)
         self.weights = np.random.randn(self.num_neurons, self.num_inputs) * scale
         self.biases = np.zeros(self.num_neurons)
+        
+        if self.use_complex:
+            self.weights = self.weights.astype(np.complex64)
+            self.biases = self.biases.astype(np.complex64)
+            
+            self.weights += 1j * np.random.randn(self.num_neurons, self.num_inputs) * scale
+            self.biases += 1j * np.zeros(self.num_neurons)
+        
         self._initialized = True
 
     def forward(self, inputs: np.ndarray) -> np.ndarray:
@@ -67,19 +75,10 @@ class DenseLayer(Layer):
         """
         Optimized backward pass of the layer.
         """
-        if self.inputs is None or self.output is None:
-            raise RuntimeError("Backward pass called before forward pass.")
-        if self.weights is None:
-            raise RuntimeError("Layer weights not initialized.")
-        if grad.shape[0] != self.inputs.shape[0]:
-            raise ValueError(f"Incoming gradient batch size {grad.shape[0]} != input batch size {self.inputs.shape[0]}.")
-        if grad.shape[1] != self.num_neurons:
-            raise ValueError(f"Incoming gradient shape mismatch. Expected {self.num_neurons} neurons, got {grad.shape[1]}")
-
         batch_size = self.inputs.shape[0]
 
         # Precompute activation derivative and delta
-        activation_deriv = derivative(self.activation_function, self.output, mode='derivative')
+        activation_deriv = derivative(self.activation_function, self.output)
         delta = grad * activation_deriv * self.threshold
 
         # Efficiently compute gradients
@@ -96,7 +95,6 @@ class DenseLayer(Layer):
         Args:
             optimizer (Optimizer): The optimizer instance.
         """
-        super()._init_optimizer(optimizer)
         # Register weights and biases as parameters to be optimized
         if self.weights is not None and self.biases is not None:
             if hasattr(self.optimizer, 'register_parameter') and callable(self.optimizer.register_parameter):
@@ -104,6 +102,8 @@ class DenseLayer(Layer):
                 self.optimizer.register_parameter(self.biases, 'biases')
             else:
                 print("Warning: Optimizer missing 'register_parameter' method.")
+                
+        super()._init_optimizer(optimizer)
 
     def _get_params_and_grads(self) -> List[Tuple[np.ndarray, np.ndarray]]:
         """

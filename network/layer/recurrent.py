@@ -2,7 +2,8 @@ import numpy as np
 from typing import Optional, Callable, List, Tuple
 from .base import RecurrentLayer
 from ..optimizer import Optimizer
-from ..functions import derivative, sigmoid, tanh, leaky_relu
+from ..functions import derivative
+from ..functions import sigmoid, tanh, leaky_relu
 
 class SimpleRNNLayer(RecurrentLayer):
     """
@@ -96,11 +97,12 @@ class SimpleRNNLayer(RecurrentLayer):
         ]
 
     def _init_optimizer(self, optimizer: Optimizer):
-        super()._init_optimizer(optimizer)
         if optimizer:
             optimizer.register_parameter(self.Wh, 'Wh')
             optimizer.register_parameter(self.Wx, 'Wx')
             optimizer.register_parameter(self.b, 'b')
+            
+        super()._init_optimizer(optimizer)
 
     def update(self):
         if self.optimizer and self.trainable:
@@ -408,7 +410,6 @@ class LSTMLayer(RecurrentLayer):
         ]
 
     def _init_optimizer(self, optimizer: Optimizer):
-        super()._init_optimizer(optimizer)
         if optimizer:
             optimizer.register_parameter(self.Wf, 'Wf')
             optimizer.register_parameter(self.Wi, 'Wi')
@@ -422,6 +423,8 @@ class LSTMLayer(RecurrentLayer):
             optimizer.register_parameter(self.bi, 'bi')
             optimizer.register_parameter(self.bo, 'bo')
             optimizer.register_parameter(self.bc, 'bc')
+            
+        super()._init_optimizer(optimizer)
 
 class GRULayer(RecurrentLayer):
     """
@@ -616,7 +619,6 @@ class GRULayer(RecurrentLayer):
         ]
 
     def _init_optimizer(self, optimizer: Optimizer):
-        super()._init_optimizer(optimizer)
         if optimizer:
             optimizer.register_parameter(self.Wz, 'Wz')
             optimizer.register_parameter(self.Wr, 'Wr')
@@ -627,6 +629,7 @@ class GRULayer(RecurrentLayer):
             optimizer.register_parameter(self.bz, 'bz')
             optimizer.register_parameter(self.br, 'br')
             optimizer.register_parameter(self.bh, 'bh')
+        super()._init_optimizer(optimizer)
 
 class BidirectionalRNNLayer(RecurrentLayer):
     """
@@ -701,8 +704,8 @@ class BidirectionalRNNLayer(RecurrentLayer):
         return params_and_grads
 
     def _init_optimizer(self, optimizer):
-        self.forward_layer._init_optimizer(optimizer)
-        self.backward_layer._init_optimizer(optimizer)
+        self.forward_layer._init_optimizer(optimizer, self.use_complex)
+        self.backward_layer._init_optimizer(optimizer, self.use_complex)
         
 class IndRNNLayer(RecurrentLayer):
     """
@@ -811,11 +814,11 @@ class IndRNNLayer(RecurrentLayer):
         ]
 
     def _init_optimizer(self, optimizer: Optimizer):
-        super()._init_optimizer(optimizer)
         if optimizer:
             optimizer.register_parameter(self.Wr, 'Wr')
             optimizer.register_parameter(self.Wx, 'Wx')
             optimizer.register_parameter(self.b, 'b')
+        super()._init_optimizer(optimizer)
 
 class CTRNNLayer(RecurrentLayer):
     """
@@ -943,8 +946,8 @@ class CTRNNLayer(RecurrentLayer):
         ]
 
     def _init_optimizer(self, optimizer: Optimizer):
-        super()._init_optimizer(optimizer)
         if optimizer:
             optimizer.register_parameter(self.weights, 'weights')
             optimizer.register_parameter(self.Wx, 'Wx')
             optimizer.register_parameter(self.biases, 'biases')
+        super()._init_optimizer(optimizer)

@@ -7,5 +7,3 @@ class Loss:
 
     def __call__(self, predicted: np.ndarray, actual: np.ndarray) -> float:
         return self.loss_function(predicted, actual)
-    
-    # More to be implemented for now just a fancy way to call the cost function

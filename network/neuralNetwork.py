@@ -10,7 +10,15 @@ from .utils.metrics import Metrics
 
 # Neural Network class
 class NeuralNetwork:
-    def __init__(self, layers: List[Layer], cost_function: Callable, threshold: float = 1.0, gradient_clip: Optional[float] = 1.0, l1_lambda: float = 0.0, l2_lambda: float = 0.0):
+    def __init__(self, 
+                 layers: List[Layer], 
+                 cost_function: Callable, 
+                 threshold: float = 1.0, 
+                 gradient_clip: Optional[float] = 1.0, 
+                 l1_lambda: float = 0.0, 
+                 l2_lambda: float = 0.0,
+                 use_complex: bool = False
+        ):
         self.layers: List[Layer] = layers
         self.cost_function: Callable = cost_function
         self.loss = None
@@ -22,6 +30,11 @@ class NeuralNetwork:
         self.l1_lambda: float = l1_lambda
         self.l2_lambda: float = l2_lambda
         self.callbacks = []
+        self.use_complex = use_complex
+        
+        if use_complex:
+            for layer in self.layers:
+                layer.use_complex = True
 
     def compile(self, optimizer: Optional[Optimizer] = None, loss: Optional[Callable] = None, metrics: Optional[List[str]] = None):
         if optimizer:
@@ -152,8 +165,7 @@ class NeuralNetwork:
         self._trigger_callbacks(self.callbacks, 'on_batch_loss', loss=loss_value)
         self._backward_pass(y)
         for layer in self.layers:
-            if hasattr(layer, 'weights') or hasattr(layer, 'biases'):
-                layer.update()
+            layer.update()
         self._trigger_callbacks(self.callbacks, 'on_batch_end_step')
 
     def _forward_pass(self, inputs: np.ndarray) -> np.ndarray:
@@ -167,7 +179,7 @@ class NeuralNetwork:
         return inputs
 
     def _backward_pass(self, targets: np.ndarray) -> None:
-        grad = derivative(func=self.loss, args=(self.layers[-1].signals, targets), mode='derivative', arg_index=0)
+        grad = derivative(func=self.loss, args=(self.layers[-1].signals, targets), arg_index=0, complex_diff=self.use_complex)
         
         self._trigger_callbacks(self.callbacks, 'on_backward_pass_begin', targets=targets, output_gradient=grad)
         self._trigger_callbacks(self.callbacks, 'on_backward_output_gradient', gradient=grad)

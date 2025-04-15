@@ -161,10 +161,11 @@ class ConvNDLayer(ConvolutionalLayer):
         Args:
             optimizer: The optimizer instance.
         """
-        super()._init_optimizer(optimizer)
         # Register filters and biases if they are initialized
         if self.filters is not None and self.biases is not None:
             self._reg_params()
+            
+        super()._init_optimizer(optimizer)
 
     def _pad_input_nd(self, inputs: np.ndarray, kernel_size: Tuple[int, ...], stride: Tuple[int, ...], padding: str) -> np.ndarray:
         """
