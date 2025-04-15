@@ -22,6 +22,8 @@ class SimpleRNNLayer(RecurrentLayer):
         self.prev_hidden_state = None
         self.last_pre_activation = None
         self.input_shape = input_shape  # Store the input shape
+        if input_shape is not None:
+            self._initialize_weights(input_shape)
 
     def _initialize_weights(self, input_shape):
         if self.input_shape is None:  # Use stored input_shape if available
@@ -104,13 +106,6 @@ class SimpleRNNLayer(RecurrentLayer):
             
         super()._init_optimizer(optimizer)
 
-    def update(self):
-        if self.optimizer and self.trainable:
-            self.Wh = self.optimizer.update(self.Wh, self.dWh, 'Wh')
-            self.Wx = self.optimizer.update(self.Wx, self.dWx, 'Wx')
-            self.b = self.optimizer.update(self.b, self.db, 'b')
-            # Reset gradients after update (important for the next batch)
-            self.dWh = np.zeros_like(self.Wh)
             
 class LSTMLayer(RecurrentLayer):
     """
@@ -207,18 +202,8 @@ class LSTMLayer(RecurrentLayer):
 
     def update(self):
         if self.optimizer and self.trainable:
-            self.Wf = self.optimizer.update(self.Wf, self.dWf, 'Wf')
-            self.Wi = self.optimizer.update(self.Wi, self.dWi, 'Wi')
-            self.Wo = self.optimizer.update(self.Wo, self.dWo, 'Wo')
-            self.Wc = self.optimizer.update(self.Wc, self.dWc, 'Wc')
-            self.Uf = self.optimizer.update(self.Uf, self.dUf, 'Uf')
-            self.Ui = self.optimizer.update(self.Ui, self.dUi, 'Ui')
-            self.Uo = self.optimizer.update(self.Uo, self.dUo, 'Uo')
-            self.Uc = self.optimizer.update(self.Uc, self.dUc, 'Uc')
-            self.bf = self.optimizer.update(self.bf, self.dbf, 'bf')
-            self.bi = self.optimizer.update(self.bi, self.dbi, 'bi')
-            self.bo = self.optimizer.update(self.bo, self.dbo, 'bo')
-            self.bc = self.optimizer.update(self.bc, self.dbc, 'bc')
+            params_and_grads = self._get_params_and_grads()
+            self.optimizer.update(params_and_grads)
             # Reset gradients
             self.dWf = np.zeros_like(self.Wf)
             self.dWi = np.zeros_like(self.Wi)
@@ -500,15 +485,8 @@ class GRULayer(RecurrentLayer):
         
     def update(self):
         if self.optimizer and self.trainable:
-            self.Wz = self.optimizer.update(self.Wz, self.dWz, 'Wz')
-            self.Wr = self.optimizer.update(self.Wr, self.dWr, 'Wr')
-            self.Wh = self.optimizer.update(self.Wh, self.dWh, 'Wh')
-            self.Uz = self.optimizer.update(self.Uz, self.dUz, 'Uz')
-            self.Ur = self.optimizer.update(self.Ur, self.dUr, 'Ur')
-            self.Uh = self.optimizer.update(self.Uh, self.dUh, 'Uh')
-            self.bz = self.optimizer.update(self.bz, self.dbz, 'bz')
-            self.br = self.optimizer.update(self.br, self.dbr, 'br')
-            self.bh = self.optimizer.update(self.bh, self.dbh, 'bh')
+            params_and_grads = self._get_params_and_grads()
+            self.optimizer.update(params_and_grads)
             # Reset gradients
             self.dWz = np.zeros_like(self.Wz)
             self.dWr = np.zeros_like(self.Wr)
@@ -704,8 +682,8 @@ class BidirectionalRNNLayer(RecurrentLayer):
         return params_and_grads
 
     def _init_optimizer(self, optimizer):
-        self.forward_layer._init_optimizer(optimizer, self.use_complex)
-        self.backward_layer._init_optimizer(optimizer, self.use_complex)
+        self.forward_layer._init_optimizer(optimizer)
+        self.backward_layer._init_optimizer(optimizer)
         
 class IndRNNLayer(RecurrentLayer):
     """
@@ -746,9 +724,8 @@ class IndRNNLayer(RecurrentLayer):
         
     def update(self):
         if self.optimizer and self.trainable:
-            self.Wr = self.optimizer.update(self.Wr, self.dWr, 'Wr')
-            self.Wx = self.optimizer.update(self.Wx, self.dWx, 'Wx')
-            self.b = self.optimizer.update(self.b, self.db, 'b')
+            params_and_grads = self._get_params_and_grads()
+            self.optimizer.update(params_and_grads)
             # Reset gradients
             self.dWr = np.zeros_like(self.Wr)
             self.dWx = np.zeros_like(self.Wx)

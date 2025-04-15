@@ -385,7 +385,7 @@ class ConvNDLayer(ConvolutionalLayer):
 
         # Apply the derivative of the activation function if it exists
         if self.activation_function:
-            derivative_values = derivative(self.activation_function, self.signals, 'derivative', arg_index=0)
+            derivative_values = derivative(self.activation_function, self.signals, arg_index=0, complex_diff=self.use_complex)
             grad = grad * derivative_values
 
         # Pad the input tensor

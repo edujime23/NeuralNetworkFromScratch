@@ -12,7 +12,6 @@ from .utils.metrics import Metrics
 class NeuralNetwork:
     def __init__(self, 
                  layers: List[Layer], 
-                 cost_function: Callable, 
                  threshold: float = 1.0, 
                  gradient_clip: Optional[float] = 1.0, 
                  l1_lambda: float = 0.0, 
@@ -20,7 +19,6 @@ class NeuralNetwork:
                  use_complex: bool = False
         ):
         self.layers: List[Layer] = layers
-        self.cost_function: Callable = cost_function
         self.loss = None
         self.threshold: float = threshold
         self.gradient_clip: Optional[float] = gradient_clip
@@ -32,8 +30,9 @@ class NeuralNetwork:
         self.callbacks = []
         self.use_complex = use_complex
         
-        if use_complex:
-            for layer in self.layers:
+        for i, layer in enumerate(self.layers):
+            layer.id = i
+            if use_complex:
                 layer.use_complex = True
 
     def compile(self, optimizer: Optional[Optimizer] = None, loss: Optional[Callable] = None, metrics: Optional[List[str]] = None):

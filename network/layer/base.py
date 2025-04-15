@@ -36,6 +36,7 @@ class Layer:
         self.inputs = None
         self.optimizer: Optional[Optimizer] = None
         self.use_complex = False
+        self.id: int = -1
 
     def _init_optimizer(self, optimizer: Optimizer):
         """Initializes the optimizer for the layer.
@@ -43,7 +44,6 @@ class Layer:
         Args:
             optimizer (Optimizer): The optimizer object to use.
         """
-        optimizer.use_complex = self.use_complex
         
         self.optimizer = optimizer
         

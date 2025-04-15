@@ -26,9 +26,7 @@ class DenseLayer(Layer):
         self.inputs: Optional[np.ndarray] = None
         self.output: Optional[np.ndarray] = None
         self.signals: Optional[np.ndarray] = None
-        self._initialized = bool(num_inputs)
-        if self._initialized and self.num_inputs is not None:
-            self._init_weights_and_biases()
+        self._initialized: bool = None
 
     def _init_weights_and_biases(self):
         """
@@ -38,14 +36,13 @@ class DenseLayer(Layer):
             raise ValueError("Cannot initialize weights without num_inputs specified.")
         scale = np.sqrt(2.0 / self.num_inputs)
         self.weights = np.random.randn(self.num_neurons, self.num_inputs) * scale
-        self.biases = np.zeros(self.num_neurons)
-        
+        self.biases = np.random.randn(self.num_neurons) * scale
         if self.use_complex:
-            self.weights = self.weights.astype(np.complex64)
-            self.biases = self.biases.astype(np.complex64)
+            self.weights = self.weights.astype(np.complex128)
+            self.biases = self.biases.astype(np.complex128)
             
-            self.weights += 1j * np.random.randn(self.num_neurons, self.num_inputs) * scale
-            self.biases += 1j * np.zeros(self.num_neurons)
+            self.weights.imag = np.random.randn(self.num_neurons, self.num_inputs) * scale
+            self.biases.imag = np.random.randn(self.num_neurons) * scale
         
         self._initialized = True
 
@@ -78,7 +75,7 @@ class DenseLayer(Layer):
         batch_size = self.inputs.shape[0]
 
         # Precompute activation derivative and delta
-        activation_deriv = derivative(self.activation_function, self.output)
+        activation_deriv = derivative(self.activation_function, self.signals, complex_diff=self.use_complex)
         delta = grad * activation_deriv * self.threshold
 
         # Efficiently compute gradients

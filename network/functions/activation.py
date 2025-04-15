@@ -16,7 +16,7 @@ def relu(x: np.ndarray) -> np.ndarray:
     """
     real_part = np.where(x.real > 0, x.real, 0)
     imag_part = np.where(x.imag > 0, x.imag, 0)
-    return real_part + 1j * imag_part
+    return np.complex128(real_part + 1j * imag_part) if np.any(x.imag != 0) else real_part
 
 def leaky_relu(x: np.ndarray, alpha: float = 0.01) -> np.ndarray:
     """
@@ -24,7 +24,7 @@ def leaky_relu(x: np.ndarray, alpha: float = 0.01) -> np.ndarray:
     """
     real_part = np.where(x.real > 0, x.real, alpha * x.real)
     imag_part = np.where(x.imag > 0, x.imag, alpha * x.imag)
-    return real_part + 1j * imag_part
+    return np.complex128(real_part + 1j * imag_part) if np.any(x.imag != 0) else real_part
 
 def tanh(x: np.ndarray) -> np.ndarray:
     """
@@ -38,6 +38,8 @@ def softmax(x: np.ndarray) -> np.ndarray:
     Note: The interpretation of softmax on complex numbers might differ from the real case.
     This implementation applies the standard formula.
     """
+    if np.isscalar(x):
+        return np.array([1.0])
     e_x = np.exp(x - np.max(x, axis=-1, keepdims=True))
     return e_x / np.sum(e_x, axis=-1, keepdims=True)
 
@@ -53,7 +55,7 @@ def elu(x: np.ndarray, alpha: float = 1.0) -> np.ndarray:
     """
     real_part = np.where(x.real > 0, x.real, alpha * (np.exp(x.real) - 1))
     imag_part = np.where(x.imag > 0, x.imag, alpha * (np.exp(x.imag) - 1))
-    return real_part + 1j * imag_part
+    return np.complex128(real_part + 1j * imag_part) if np.any(x.imag != 0) else real_part
 
 def swish(x: np.ndarray) -> np.ndarray:
     """

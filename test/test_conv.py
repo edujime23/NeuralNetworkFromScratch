@@ -27,7 +27,7 @@ NUM_CLASSES = 1 # Binary classification (0: circle, 1: square)
 NUM_SAMPLES = 1000
 BATCH_SIZE = 32
 EPOCHS = 10000
-LEARNING_RATE = 1e-3
+LEARNING_RATE = 1e-2
 PLOT_UPDATE_FREQ = 1 # Update plot every N epochs
 FEATURE_MAPS_TO_SHOW = 2 # How many feature maps to visualize
 
@@ -278,8 +278,8 @@ if __name__ == "__main__":
     # Compile Model
     optimizer = Adam(learning_rate=LEARNING_RATE)
     loss_function = binary_cross_entropy # Corrected: Use binary loss for sigmoid output
-    nn = NeuralNetwork(layers, loss_function)
-    nn.compile(optimizer=optimizer)
+    nn = NeuralNetwork(layers)
+    nn.compile(optimizer=optimizer, loss=loss_function)
     print("Model compiled.")
 
     # Setup Plotting

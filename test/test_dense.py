@@ -15,6 +15,13 @@ import matplotlib.pyplot as plt
 import multiprocessing as mp
 import time
 import queue
+import cProfile  # Import the cProfile module
+import pstats  # For analyzing the profile data
+
+# --- Configuration for Live Plotting ---
+OUTPUT_PLOT_QUEUE_MAXSIZE = 5
+LOSS_PLOT_QUEUE_MAXSIZE = 5
+PLOT_UPDATE_INTERVAL = 0.1  # Minimum seconds between plot updates
 
 class LossCallback(Callback):
     def on_epoch_end(self, epoch, logs=None):
@@ -52,9 +59,10 @@ def plot_process(plot_queue, inputs, target_func, train_inputs, train_outputs):
 
     while True:
         try:
-            predictions = plot_queue.get(timeout=1 / 120)
-            if predictions is None:  # Signal to stop
+            item = plot_queue.get(timeout=update_interval)
+            if item is None:  # Signal to stop
                 break
+            predictions = item
 
             current_time = time.time()
             if current_time - last_update_time > update_interval:
@@ -65,9 +73,9 @@ def plot_process(plot_queue, inputs, target_func, train_inputs, train_outputs):
                 last_update_time = current_time
 
         except queue.Empty:
-            plt.pause(1 / 120)
+            plt.pause(update_interval)
         except Exception as e:
-            print(f"Error in plot process: {e}")
+            print(f"Error in plot process (output): {e}")
             break
 
     plt.close()
@@ -88,73 +96,226 @@ class LivePlotCallback(Callback):
                 self.plot_queue.put_nowait(predictions)
                 self.last_put_time = current_time
 
+class LiveLossPlotCallback(Callback):
+    """Sends loss data to a separate process for live plotting."""
+    def __init__(self, plot_queue: mp.Queue):
+        self.plot_queue = plot_queue
+        self.train_losses_real = []
+        self.train_losses_imag = []
+        self.val_losses_real = []
+        self.val_losses_imag = []
+
+    def on_epoch_end(self, epoch, logs=None):
+        loss = logs.get('loss')
+        val_loss = logs.get('val_loss')
+
+        if loss is not None:
+            self.train_losses_real.append(np.real(loss))
+            self.train_losses_imag.append(np.imag(loss))
+        if val_loss is not None:
+            self.val_losses_real.append(np.real(val_loss))
+            self.val_losses_imag.append(np.imag(val_loss))
+
+        if loss is not None:
+            plot_data = {
+                'epoch': epoch + 1,
+                'train_loss_real': np.real(loss),
+                'train_loss_imag': np.imag(loss),
+                'val_loss_real': np.real(val_loss) if val_loss is not None else None,
+                'val_loss_imag': np.imag(val_loss) if val_loss is not None else None
+            }
+            try:
+                self.plot_queue.put_nowait(plot_data)
+            except queue.Full:
+                pass # Skip if plot process is lagging
+
+def plot_loss_process(plot_queue: mp.Queue, num_epochs: int):
+    """Target function for the plotting process."""
+    plt.ion()
+    fig, axs = plt.subplots(2, 1, figsize=(10, 8))  # 2 subplots for real and imaginary loss
+
+    # Real part of the loss
+    ax_real = axs[0]
+    ax_real.set_xlabel('Epoch')
+    ax_real.set_ylabel('Real Loss')
+    ax_real.set_title('Live Training and Validation Loss (Real)')
+    ax_real.grid(True)
+    line_train_real, = ax_real.plot([], [], label='Training Loss (Real)', color='blue')
+    line_val_real, = ax_real.plot([], [], label='Validation Loss (Real)', color='orange')
+    ax_real.legend()
+
+    # Imaginary part of the loss
+    ax_imag = axs[1]
+    ax_imag.set_xlabel('Epoch')
+    ax_imag.set_ylabel('Imaginary Loss')
+    ax_imag.set_title('Live Training and Validation Loss (Imaginary)')
+    ax_imag.grid(True)
+    line_train_imag, = ax_imag.plot([], [], label='Training Loss (Imaginary)', color='blue', linestyle='--')
+    line_val_imag, = ax_imag.plot([], [], label='Validation Loss (Imaginary)', color='orange', linestyle='--')
+    ax_imag.legend()
+
+    epochs_data = []
+    train_loss_real_data = []
+    train_loss_imag_data = []
+    val_loss_real_data = []
+    val_loss_imag_data = []
+
+    plt.tight_layout()
+    plt.show(block=False)
+    last_update_time = time.time()
+
+    while True:
+        try:
+            plot_data = plot_queue.get(timeout=0.1)
+            if plot_data is None:
+                break
+
+            current_time = time.time()
+            if current_time - last_update_time < PLOT_UPDATE_INTERVAL and plot_data.get('epoch', 0) < num_epochs:
+                continue
+
+            epoch = plot_data.get('epoch')
+            train_loss_real = plot_data.get('train_loss_real')
+            train_loss_imag = plot_data.get('train_loss_imag')
+            val_loss_real = plot_data.get('val_loss_real')
+            val_loss_imag = plot_data.get('val_loss_imag')
+
+            if epoch is not None and train_loss_real is not None and train_loss_imag is not None:
+                epochs_data.append(epoch)
+                train_loss_real_data.append(train_loss_real)
+                train_loss_imag_data.append(train_loss_imag)
+                line_train_real.set_xdata(epochs_data)
+                line_train_real.set_ydata(train_loss_real_data)
+                line_train_imag.set_xdata(epochs_data)
+                line_train_imag.set_ydata(train_loss_imag_data)
+
+            if epoch is not None and val_loss_real is not None and val_loss_imag is not None:
+                val_loss_real_data.append(val_loss_real)
+                val_loss_imag_data.append(val_loss_imag)
+                line_val_real.set_xdata(epochs_data)
+                line_val_real.set_ydata(val_loss_real_data)
+                line_val_imag.set_xdata(epochs_data)
+                line_val_imag.set_ydata(val_loss_imag_data)
+
+            ax_real.relim()
+            ax_real.autoscale_view()
+            ax_imag.relim()
+            ax_imag.autoscale_view()
+            fig.canvas.draw_idle()
+            fig.canvas.flush_events()
+            last_update_time = current_time
+
+        except queue.Empty:
+            plt.pause(0.01)
+        except Exception as e:
+            print(f"Error in plot process (loss): {e}")
+            import traceback
+            traceback.print_exc()
+            break
+
+    plt.ioff()
+    print("Loss plotting process finished. Close the plot window manually.")
+    plt.show(block=True)
+    plt.close(fig)
+
 def func(x):
-    return 1j * x + x
+    return x * 1j
 
 if __name__ == "__main__":
     mp.set_start_method('spawn', force=True)
 
     num_samples = 5000
-    inputs = np.linspace(0, 10, num_samples).astype(np.complex64).reshape(-1, 1)  # Complex input
+    inputs = np.linspace(0, 10, num_samples).reshape(-1, 1)
     outputs = func(inputs)
 
     input_dims = signature(func).parameters.__len__()
-    out_dims = np.array(func(*np.random.randn(input_dims).astype(np.complex64))).size
+    out_dims = np.array(func(*np.random.randn(input_dims))).size
 
     train_inputs = inputs
     train_outputs = outputs
 
-    layers = [DenseLayer(8, activation_function=leaky_relu) for _ in range(4)]
+    layers = [DenseLayer(16, activation_function=leaky_relu) for _ in range(1)]
     layers.extend([DenseLayer(out_dims, activation_function=linear)])
 
-    adam = Adam(learning_rate=1e-4, weight_decay=0, gradient_clip=None)
-    adamW = AdamW(learning_rate=1e-4, weight_decay=0, gradient_clip=None)
-    amsgrad = AMSGrad(learning_rate=1e-4, weight_decay=0, gradient_clip=None)
-    sgd = SGD(learning_rate=1e-6, momentum=1 / 2, nesterov=True)
-    rmsprop = RMSprop(learning_rate=1e-3, rho=0.9, gradient_clip=1)
+    adam = Adam(learning_rate=1e-2, gradient_clip=None)
+    adamW = AdamW(learning_rate=1e-6, weight_decay=0, gradient_clip=None)
+    amsgrad = AMSGrad(learning_rate=1e-6, weight_decay=0, gradient_clip=None)
+    sgd = SGD(learning_rate=1e-12, momentum=1/2, nesterov=True)
+    rmsprop = RMSprop(learning_rate=1e-6, rho=0.9, gradient_clip=None)
 
-    nn = NeuralNetwork(layers, mean_squared_error, gradient_clip=None, l1_lambda=0, l2_lambda=0, use_complex=True)
-    nn.compile(optimizer=adam)
+    nn = NeuralNetwork(layers, gradient_clip=None, l1_lambda=0, l2_lambda=0, use_complex=True)
 
-    plot_queue = mp.Queue()
+    nn.compile(optimizer=adam, loss=mean_squared_error)
 
-    live_plot_callback = LivePlotCallback(plot_queue, inputs, nn, update_frequency=1)
+    output_plot_queue = mp.Queue(maxsize=OUTPUT_PLOT_QUEUE_MAXSIZE)
+    loss_plot_queue = mp.Queue(maxsize=LOSS_PLOT_QUEUE_MAXSIZE)
+
+    live_output_plot_callback = LivePlotCallback(output_plot_queue, inputs, nn, update_frequency=1)
+    live_loss_plot_callback = LiveLossPlotCallback(loss_plot_queue)
     loss_callback = LossCallback()
 
-    plot_process_instance = mp.Process(
+    output_plot_process = mp.Process(
         target=plot_process,
-        args=(plot_queue, inputs, func, train_inputs, train_outputs),
+        args=(output_plot_queue, inputs, func, train_inputs, train_outputs),
+        daemon=True
     )
-    plot_process_instance.daemon = True
-    plot_process_instance.start()
+    print("Starting output plotting process...")
+    output_plot_process.start()
+
+    loss_plot_process = mp.Process(
+        target=plot_loss_process,
+        args=(loss_plot_queue, 1000),  # Use the number of epochs from fit
+        daemon=True
+    )
+    print("Starting loss plotting process...")
+    loss_plot_process.start()
+
+    profiler = cProfile.Profile()
+    profiler.enable()
 
     try:
         nn.fit(
             train_inputs,
             train_outputs,
-            epochs=2 ** 64,
-            batch_size=num_samples // 256,
-            callbacks=[loss_callback, live_plot_callback],
+            epochs=1000,  # Reduce epochs for profiling to get a manageable output
+            batch_size=num_samples // 64,
+            callbacks=[loss_callback, live_output_plot_callback, live_loss_plot_callback],
             restore_best_weights=True,
         )
     except KeyboardInterrupt:
         print("\nTraining interrupted by user")
     finally:
+        profiler.disable()
+        stats = pstats.Stats(profiler).sort_stats('tottime')
+        print("\n--- cProfile Analysis ---")
+        stats.print_stats(20)  # Print the top 20 functions by total time
+
+        # Cleanup output plotting process
+        print("Cleaning up output plotting process...")
         try:
-            plot_queue.put_nowait(None)
+            output_plot_queue.put_nowait(None)
         except queue.Full:
-            while not plot_queue.empty():
-                try:
-                    plot_queue.get_nowait()
-                except queue.Empty:
-                    break
-            plot_queue.put(None)
+            pass
+        output_plot_process.join(timeout=5.0)
+        if output_plot_process.is_alive():
+            print("Output plot process did not exit gracefully, terminating...")
+            output_plot_process.terminate()
+            output_plot_process.join(timeout=1.0)
+        output_plot_queue.close()
+        output_plot_queue.join_thread()
 
-        plot_process_instance.join(timeout=1.0)
+        # Cleanup loss plotting process
+        print("Cleaning up loss plotting process...")
+        try:
+            loss_plot_queue.put_nowait(None)
+        except queue.Full:
+            pass
+        loss_plot_process.join(timeout=5.0)
+        if loss_plot_process.is_alive():
+            print("Loss plot process did not exit gracefully, terminating...")
+            loss_plot_process.terminate()
+            loss_plot_process.join(timeout=1.0)
+        loss_plot_queue.close()
+        loss_plot_queue.join_thread()
 
-        if plot_process_instance.is_alive():
-            plot_process_instance.terminate()
-            plot_process_instance.join()
-            plot_process_instance.close()
-
-        print("Training completed.")
+        print("Cleanup complete.")

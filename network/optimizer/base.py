@@ -7,18 +7,14 @@ class Optimizer:
         self.t = 0
         self.param_states: Dict[int, Dict[str, np.ndarray]] = {}
         self.gradient_clip = gradient_clip
-        self.use_complex = False
 
     def _resolve_learning_rate(self, learning_rate: Union[float, Callable[[], float]]) -> Union[float, Callable[[], float]]:
         return learning_rate() if callable(learning_rate) else learning_rate
 
     def register_parameter(self, param: np.ndarray, name: str):
         """Registers a parameter with the optimizer."""
-        param_id = id(param)
-        if param_id not in self.param_states:
+        if (param_id := id(param)) not in self.param_states:
             self.param_states[param_id] = {}
-            if self.use_complex:
-                param = param.astype(np.complex64)
             self._initialize_param_state(param, name, param_id)
 
     def _initialize_param_state(self, param: np.ndarray, name: str, param_id: int):

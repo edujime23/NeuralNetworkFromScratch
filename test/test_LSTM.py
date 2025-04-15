@@ -227,8 +227,8 @@ if __name__ == "__main__":
     # 5. Compile Model
     optimizer = Adam(learning_rate=LEARNING_RATE, gradient_clip=1.0) # Added gradient clipping
     loss_function = mean_squared_error
-    nn = NeuralNetwork(layers, loss_function)
-    nn.compile(optimizer=optimizer)
+    nn = NeuralNetwork(layers)
+    nn.compile(optimizer=optimizer, loss=loss_function)
     print("Model compiled.")
 
     # 6. Setup Plotting

@@ -206,9 +206,9 @@ if __name__ == "__main__":
             recurrent_layer,
             DenseLayer(1, activation_function=None) # Consider no activation for summation
         ]
-        nn = NeuralNetwork(layers, mean_absolute_error,
+        nn = NeuralNetwork(layers,
                             l1_lambda=1e-5, l2_lambda=1e-4)
-        nn.compile(optimizer=Adam(learning_rate=LEARNING_RATE, weight_decay=1e-2))
+        nn.compile(optimizer=Adam(learning_rate=LEARNING_RATE), loss=mean_squared_error)
 
         # Train the network
         nn.fit(train_inputs, train_outputs, epochs=EPOCHS, batch_size=BATCH_SIZE,

@@ -5,7 +5,7 @@ def derivative(
     func: Callable,
     args: Tuple,
     arg_index: int = 0,
-    dx: float = 1e-6,
+    dx: float = 1e-7,
     complex_diff: bool = False,
 ) -> Union[np.ndarray, float]:
     """
@@ -34,68 +34,32 @@ def derivative(
         raise ValueError("arg_index must be an integer")
     if not 0 <= arg_index < len(args):
         raise ValueError("arg_index is out of bounds for the provided args")
-    
-    dtype = np.complex64 if complex_diff or any(isinstance(arg, np.ndarray) and np.iscomplexobj(arg) for arg in args) else np.float64
 
     args_list = list(args)
     arg_to_diff = args_list[arg_index]
 
     if isinstance(arg_to_diff, np.ndarray):
-        result_array = np.zeros_like(arg_to_diff, dtype=dtype)
-        iterator = np.nditer(arg_to_diff, flags=['multi_index'])
-        while not iterator.finished:
-            multi_index = iterator.multi_index
-            original_value = arg_to_diff[multi_index].copy()
+        original_shape = arg_to_diff.shape
+        perturbation = np.zeros_like(arg_to_diff, dtype=np.complex128 if complex_diff else np.float64)
+        perturbation.flat[:] = (dx * (1j if complex_diff else 1))
 
-            f_plus_args = list(args_list)
-            if complex_diff:
-                f_plus_args[arg_index] = arg_to_diff.astype(np.complex64).copy()
-                f_plus_args[arg_index][multi_index] += dx * 1j
-            else:
-                f_plus_args[arg_index] = arg_to_diff.copy()
-                f_plus_args[arg_index][multi_index] += dx
-            f_plus = func(*f_plus_args)
+        # f_plus calculation
+        args_plus = list(args_list)
+        args_plus[arg_index] = arg_to_diff + perturbation
+        f_plus = func(*args_plus)
 
-            f_minus_args = list(args_list)
-            if complex_diff:
-                f_minus_args[arg_index] = arg_to_diff.astype(np.complex64).copy()
-                f_minus_args[arg_index][multi_index] -= dx * 1j
-            else:
-                f_minus_args[arg_index] = arg_to_diff.copy()
-                f_minus_args[arg_index][multi_index] -= dx
-            f_minus = func(*f_minus_args)
-
-            if complex_diff:
-                deriv = (
-                    np.complex64(
-                        f_plus[multi_index] - f_minus[multi_index]
-                    ).imag
-                    / (2 * dx)
-                    if isinstance(f_plus, np.ndarray)
-                    and isinstance(f_minus, np.ndarray)
-                    else np.complex64(f_plus - f_minus).imag / (2 * dx)
-                )
-            elif isinstance(f_plus, np.ndarray) and isinstance(f_minus, np.ndarray):
-                deriv = (f_plus[multi_index] - f_minus[multi_index]) / (2 * dx)
-            else:
-                deriv = (f_plus - f_minus) / (2 * dx)
-
-            result_array[multi_index] = deriv
-
-            args_list[arg_index][multi_index] = original_value
-            iterator.iternext()
-        return result_array if result_array.imag.any() else result_array.real
+        # f_minus calculation
+        args_minus = list(args_list)
+        args_minus[arg_index] = arg_to_diff - perturbation
+        f_minus = func(*args_minus)
     else:
         # Case where the argument is a single number
-        original_value = arg_to_diff
-        h = dx * 1j if complex_diff else dx
-        f_plus = func(*(list(args[:arg_index]) + [original_value + h] + list(args[arg_index + 1:])))
-        f_minus = func(*(list(args[:arg_index]) + [original_value - h] + list(args[arg_index + 1:])))
+        h = dx * (1j if complex_diff else 1)
+        f_plus = func(*(list(args[:arg_index]) + [arg_to_diff + h] + list(args[arg_index + 1:])))
 
-        if complex_diff:
-            return np.complex64(f_plus - f_minus).imag / (2 * dx)
-        else:
-            return (f_plus - f_minus) / (2 * dx)
+        f_minus = func(*(list(args[:arg_index]) + [arg_to_diff - h] + list(args[arg_index + 1:])))
+
+    return np.imag(f_plus) / dx if complex_diff else (f_plus - f_minus) / (2 * dx)
 
 if __name__ == '__main__':
     def linear_func(x: Union[float, np.ndarray]) -> Union[float, np.ndarray]:
