@@ -1,33 +1,73 @@
 import numpy as np
 from typing import Callable, Tuple, Iterable, Union
+from numba import njit, prange
+
+@njit(cache=True, parallel=True)
+def _compute_complex_derivative(f_plus, dx):
+    """Optimized complex derivative computation with parallel processing"""
+    result = np.empty(f_plus.shape[0], dtype=np.float64)
+    for i in prange(f_plus.shape[0]):
+        result[i] = f_plus[i].imag / dx
+    return result
+
+@njit(cache=True)
+def _compute_real_derivative(f_plus, f_minus, dx):
+    """Vectorized real derivative computation"""
+    return (f_plus - f_minus) / (2 * dx)
+
+def _compute_diff(f_plus, f_minus, dx: float, complex_diff: bool, original_shape):
+    """Vectorized wrapper for derivative computation"""
+    if complex_diff:
+        f_plus_array = np.asarray(f_plus, dtype=np.complex128)
+        if f_plus_array.ndim == 0:
+            return np.full(original_shape, np.imag(f_plus_array) / dx)
+        derivative_result = _compute_complex_derivative(f_plus_array.ravel(), dx)
+    else:
+        f_plus_array = np.asarray(f_plus, dtype=np.float64)
+        f_minus_array = np.asarray(f_minus, dtype=np.float64)
+        if f_plus_array.ndim == 0:
+            return np.full(original_shape, (f_plus_array - f_minus_array) / (2 * dx))
+        derivative_result = _compute_real_derivative(f_plus_array.ravel(), f_minus_array.ravel(), dx)
+    
+    return derivative_result.reshape(original_shape)
+
+def _compute_array_derivative(func, arg_to_diff, dx: float, complex_diff: bool, original_shape, args, arg_index):
+    """Memory-efficient array derivative computation"""
+    args_list = list(args)
+    if complex_diff:
+        h = dx * 1j
+        args_list[arg_index] = arg_to_diff + h
+        f_plus = func(*args_list)
+        return _compute_diff(f_plus, None, dx, True, original_shape)
+    
+    h = dx
+    args_list[arg_index] = arg_to_diff + h
+    f_plus = func(*args_list)
+    args_list[arg_index] = arg_to_diff - h
+    f_minus = func(*args_list)
+    return _compute_diff(f_plus, f_minus, dx, False, original_shape)
+
+def _compute_scalar_derivative(func, args_before, arg_to_diff, args_after, h, dx: float, complex_diff: bool):
+    """Auxiliary function to compute derivative for scalar inputs"""
+    f_plus = func(*(args_before + (arg_to_diff + h,) + args_after))
+    f_minus = func(*(args_before + (arg_to_diff - h,) + args_after))
+    
+    return np.imag(f_plus) / dx if complex_diff else (f_plus - f_minus) / (2 * dx)
 
 def derivative(
-    func: Callable,
+    func,
     args: Tuple,
     arg_index: int = 0,
     dx: float = 1e-7,
     complex_diff: bool = False,
 ) -> Union[np.ndarray, float]:
-    """
-    Calculates the numerical derivative of a function with respect to one of its arguments.
-
-    Uses either the finite difference method or the complex step derivative approximation.
-
-    Args:
-        func: The callable function to differentiate.
-        args: A tuple containing the arguments to the function.
-        arg_index: The index of the argument with respect to which the derivative is calculated (default: 0).
-        dx: The step size for the finite difference or complex step (default: 1e-6).
-        complex_diff: If True, uses the complex step derivative approximation; otherwise, uses the central finite difference method (default: False).
-
-    Returns:
-        The numerical derivative as a NumPy array or a float, depending on the input argument.
-    """
-    if not isinstance(args, Tuple):
+    """Main derivative function, handles input validation and dispatches to appropriate compute function"""
+    if not isinstance(args, tuple):
         if isinstance(args, Iterable) and not isinstance(args, np.ndarray):
             args = tuple(args)
         else:
             args = (args,)
+    
     if not callable(func):
         raise ValueError("func must be a callable function")
     if not isinstance(arg_index, int):
@@ -43,55 +83,37 @@ def derivative(
         perturbation = np.zeros_like(arg_to_diff, dtype=np.complex128 if complex_diff else np.float64)
         perturbation.flat[:] = (dx * (1j if complex_diff else 1))
 
-        # f_plus calculation
-        args_plus = list(args_list)
-        args_plus[arg_index] = arg_to_diff + perturbation
-        f_plus = func(*args_plus)
-
-        # f_minus calculation
-        args_minus = list(args_list)
-        args_minus[arg_index] = arg_to_diff - perturbation
-        f_minus = func(*args_minus)
+        return _compute_array_derivative(func, arg_to_diff, dx, complex_diff, original_shape, args, arg_index)
     else:
-        # Case where the argument is a single number
         h = dx * (1j if complex_diff else 1)
-        f_plus = func(*(list(args[:arg_index]) + [arg_to_diff + h] + list(args[arg_index + 1:])))
-
-        f_minus = func(*(list(args[:arg_index]) + [arg_to_diff - h] + list(args[arg_index + 1:])))
-
-    return np.imag(f_plus) / dx if complex_diff else (f_plus - f_minus) / (2 * dx)
+        args_before = args[:arg_index]
+        args_after = args[arg_index + 1:]
+        
+        return _compute_scalar_derivative(func, args_before, arg_to_diff, args_after, h, dx, complex_diff)
 
 if __name__ == '__main__':
     def linear_func(x: Union[float, np.ndarray]) -> Union[float, np.ndarray]:
-        """A simple linear function: f(x) = 2 * x."""
         return 2 * x
 
     def linear_derivative(x: Union[float, np.ndarray]) -> Union[float, np.ndarray]:
-        """The derivative of linear_func: f'(x) = 2."""
         return np.full_like(x, 2)
 
     def constant_func(x: Union[float, np.ndarray]) -> int:
-        """A constant function: f(x) = 2."""
         return 2
 
     def constant_derivative(x: Union[float, np.ndarray]) -> np.ndarray:
-        """The derivative of constant_func: f'(x) = 0."""
         return np.zeros_like(x)
 
     def absolute_func(x: Union[float, np.ndarray]) -> Union[float, np.ndarray]:
-        """The absolute value function: f(x) = |2 * x|."""
         return np.abs(2 * x)
 
     def absolute_derivative(x: Union[float, np.ndarray]) -> np.ndarray:
-        """The derivative of absolute_func: f'(x) = 2 if x >= 0 else -2."""
         return np.where(x >= 0, 2, -2)
 
     def quadratic_func(x: Union[float, np.ndarray]) -> Union[float, np.ndarray]:
-        """A quadratic function: f(x) = x**2."""
         return x**2
 
     def quadratic_derivative(x: Union[float, np.ndarray]) -> Union[float, np.ndarray]:
-        """The derivative of quadratic_func: f'(x) = 2 * x."""
         return 2 * x
 
     test_array = np.arange(-5, 5)
@@ -117,6 +139,22 @@ if __name__ == '__main__':
     print("Expected derivative:", absolute_derivative(test_array))
     print("Derivative (complex diff):", derivative(absolute_func, args_tuple, dx=1e-6, complex_diff=True))
     print("Expected derivative:", absolute_derivative(test_array))
+    print("Note: The complex difference method yields zeros because the absolute value function is not analytic.")
+
+    epsilon = 1e-8
+    def smooth_absolute_func(x: Union[float, np.ndarray]) -> Union[float, np.ndarray]:
+        return np.sqrt((2 * x)**2 + epsilon**2)
+
+    def smooth_absolute_derivative(x: Union[float, np.ndarray]) -> np.ndarray:
+        return 4 * x / np.sqrt((2 * x)**2 + epsilon**2)
+
+    print("\n--- Smoothed Absolute Value Function (Approximation) ---")
+    print("Args:", args_tuple)
+    print("Derivative (normal diff):", derivative(smooth_absolute_func, args_tuple, dx=1e-6, complex_diff=False))
+    print("Expected derivative:", smooth_absolute_derivative(test_array))
+    print("Derivative (complex diff):", derivative(smooth_absolute_func, args_tuple, dx=1e-6, complex_diff=True))
+    print("Expected derivative:", smooth_absolute_derivative(test_array))
+    print(f"Note: This uses the approximation sqrt((2x)^2 + {epsilon}^2), which is analytic.")
 
     print("\n--- Quadratic Function ---")
     print("Args:", args_tuple)

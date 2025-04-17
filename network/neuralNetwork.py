@@ -178,8 +178,7 @@ class NeuralNetwork:
         return inputs
 
     def _backward_pass(self, targets: np.ndarray) -> None:
-        grad = derivative(func=self.loss, args=(self.layers[-1].signals, targets), arg_index=0, complex_diff=self.use_complex)
-        
+        grad = derivative(func=self.loss, args=(self.layers[-1].signals, targets), arg_index=0, complex_diff=False)
         self._trigger_callbacks(self.callbacks, 'on_backward_pass_begin', targets=targets, output_gradient=grad)
         self._trigger_callbacks(self.callbacks, 'on_backward_output_gradient', gradient=grad)
         for layer in reversed(self.layers):

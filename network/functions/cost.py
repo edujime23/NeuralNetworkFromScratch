@@ -1,47 +1,66 @@
 import numpy as np
+from typing import Union
+from numba import jit
 
-def mean_squared_error(predicted: np.ndarray, target: np.ndarray) -> np.complex128:
+@jit(nopython=True, cache=True)
+def mean_squared_error(predicted: np.ndarray, target: np.ndarray) -> Union[np.complex128, np.float64]:
     """
     Mean Squared Error loss function for complex numbers.
     Returns a complex number where the real part is the mean of the squared real difference
     and the imaginary part is the mean of the squared imaginary difference.
     """
     diff = predicted - target
-    real_error = np.mean(diff.real**2)
-    imag_error = np.mean(diff.imag**2)
-    return np.complex128(real_error, imag_error) if np.any(target.imag != 0) else real_error
+    real_error = np.mean(np.square(diff.real))
+    if np.iscomplexobj(target):
+        imag_error = np.mean(np.square(diff.imag))
+        return real_error + 1j * imag_error
+    else:
+        return real_error
 
-def cross_entropy(predicted: np.ndarray, target: np.ndarray) -> np.complex128:
+@jit(nopython=True, cache=True)
+def cross_entropy(predicted: np.ndarray, target: np.ndarray) -> Union[np.complex128, np.float64]:
     """
     Cross-Entropy loss function for complex numbers.
     Returns a complex number where the real part is the mean of the real component of the loss
     and the imaginary part is the mean of the imaginary component of the loss.
     """
-    epsilon = 1e-15  # To avoid division by zero
+    epsilon = 1e-12  # More robust way to get epsilon
     loss = -(target * np.log(predicted + epsilon) + (1 - target) * np.log(1 - predicted + epsilon))
-    return np.mean(loss, dtype=np.complex128)
+    if hasattr(predicted, 'size'):
+        return 0.0 if loss.size == 0 else loss.sum() / loss.size
+    else:
+        return loss
 
-def binary_cross_entropy(predicted: np.ndarray, target: np.ndarray) -> np.complex128:
+@jit(nopython=True, cache=True)
+def binary_cross_entropy(predicted: np.ndarray, target: np.ndarray) -> Union[np.complex128, np.float64]:
     """
     Binary Cross-Entropy loss function for complex numbers.
     Returns a complex number where the real part is the mean of the real component of the loss
     and the imaginary part is the mean of the imaginary component of the loss.
     """
-    epsilon = 1e-15
-    loss = -(target * np.log(predicted + epsilon) + (1 - target) * np.log(1 - predicted + epsilon))
-    return np.mean(loss, dtype=target.dtype)
+    epsilon = 1e-12
+    loss = -(target * np.log(predicted) + (1 - target) * np.log(1 - predicted))
+    if hasattr(predicted, 'size'):
+        return 0.0 if loss.size == 0 else loss.sum() / loss.size
+    else:
+        return loss
 
-def categorical_cross_entropy(predicted: np.ndarray, target: np.ndarray) -> np.complex128:
+@jit(nopython=True, cache=True)
+def categorical_cross_entropy(predicted: np.ndarray, target: np.ndarray) -> Union[np.complex128, np.float64]:
     """
     Categorical Cross-Entropy loss function for complex numbers.
     Returns a complex number where the real part is the mean of the real component of the loss
     and the imaginary part is the mean of the imaginary component of the loss.
     """
-    epsilon = 1e-15
-    loss = -np.sum(target * np.log(predicted + epsilon), axis=-1, keepdims=True)
-    return np.mean(loss, dtype=target.dtype)
+    epsilon = 1e-12
+    loss = -np.sum(target * np.log(predicted + epsilon), axis=-1)
+    if hasattr(loss, 'size'):
+        return 0.0 if loss.size == 0 else loss.sum() / loss.size
+    else:
+        return loss  # Handle case where loss might be a scalar
 
-def mean_absolute_error(predicted: np.ndarray, target: np.ndarray) -> np.complex128:
+@jit(nopython=True, cache=True)
+def mean_absolute_error(predicted: np.ndarray, target: np.ndarray) -> Union[np.complex128, np.float64]:
     """
     Mean Absolute Error (MAE) loss function for complex numbers.
     Returns a complex number where the real part is the mean of the real component of the absolute difference
@@ -49,10 +68,14 @@ def mean_absolute_error(predicted: np.ndarray, target: np.ndarray) -> np.complex
     """
     diff = predicted - target
     real_error = np.mean(np.abs(diff.real))
-    imag_error = np.mean(np.abs(diff.imag))
-    return np.complex128(real_error, imag_error) if np.any(target.imag != 0) else real_error
+    if np.iscomplexobj(target):
+        imag_error = np.mean(np.abs(diff.imag))
+        return real_error + 1j * imag_error
+    else:
+        return real_error
 
-def huber_loss(predicted: np.ndarray, target: np.ndarray, delta: float = 1.0) -> np.complex128:
+@jit(nopython=True, cache=True)
+def huber_loss(predicted: np.ndarray, target: np.ndarray, delta: float = 1.0) -> Union[np.complex128, np.float64]:
     """
     Huber loss function for complex numbers.
     Returns a complex number where the real part is the mean of the real component of the Huber loss
@@ -60,10 +83,13 @@ def huber_loss(predicted: np.ndarray, target: np.ndarray, delta: float = 1.0) ->
     """
     diff = predicted - target
     abs_diff = np.abs(diff)
-    quadratic_loss = 0.5 * abs_diff**2
+    quadratic_loss = 0.5 * np.square(abs_diff)
     linear_loss = delta * abs_diff - 0.5 * delta**2
     loss = np.where(abs_diff <= delta, quadratic_loss, linear_loss)
-    return np.mean(loss, dtype=target.dtype)
+    if hasattr(predicted, 'size'):
+        return 0.0 if loss.size == 0 else loss.sum() / loss.size
+    else:
+        return loss
 
 if __name__ == '__main__':
     # Example usage with complex numbers

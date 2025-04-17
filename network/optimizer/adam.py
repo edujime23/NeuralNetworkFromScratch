@@ -8,7 +8,7 @@ class Adam(Optimizer):
         self.epsilon = epsilon
 
     def _initialize_param_state(self, param: np.ndarray, name: str, param_id: int):
-        if not np.any(param != None):
+        if not np.any(param):
             param = np.zeros_like(param)
         if 'm' not in self.param_states[param_id]:
             self.param_states[param_id]['m'] = np.zeros_like(param, dtype=param.dtype) # Ensure dtype matches

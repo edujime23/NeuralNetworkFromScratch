@@ -237,13 +237,13 @@ if __name__ == "__main__":
     layers = [DenseLayer(16, activation_function=leaky_relu) for _ in range(1)]
     layers.extend([DenseLayer(out_dims, activation_function=linear)])
 
-    adam = Adam(learning_rate=1e-2, gradient_clip=None)
-    adamW = AdamW(learning_rate=1e-6, weight_decay=0, gradient_clip=None)
+    adam = Adam(learning_rate=1e-4, gradient_clip=1)
+    adamW = AdamW(learning_rate=1e-4, weight_decay=0, gradient_clip=None)
     amsgrad = AMSGrad(learning_rate=1e-6, weight_decay=0, gradient_clip=None)
-    sgd = SGD(learning_rate=1e-12, momentum=1/2, nesterov=True)
+    sgd = SGD(learning_rate=1e-15, momentum=1/2, nesterov=True)
     rmsprop = RMSprop(learning_rate=1e-6, rho=0.9, gradient_clip=None)
 
-    nn = NeuralNetwork(layers, gradient_clip=None, l1_lambda=0, l2_lambda=0, use_complex=True)
+    nn = NeuralNetwork(layers, gradient_clip=1, l1_lambda=1e-2, l2_lambda=1e-2, use_complex=True)
 
     nn.compile(optimizer=adam, loss=mean_squared_error)
 
@@ -277,7 +277,7 @@ if __name__ == "__main__":
         nn.fit(
             train_inputs,
             train_outputs,
-            epochs=1000,  # Reduce epochs for profiling to get a manageable output
+            epochs=int(1e9),  # Reduce epochs for profiling to get a manageable output
             batch_size=num_samples // 64,
             callbacks=[loss_callback, live_output_plot_callback, live_loss_plot_callback],
             restore_best_weights=True,
