@@ -3,7 +3,7 @@ import numpy as np
 from typing import Optional, Callable, Tuple, Union, List
 from .base import ConvolutionalLayer
 from ..functions import derivative
-from scipy.signal import convolve2d, convolve
+from scipy.signal import convolve2d, convolve, fftconvolve
 import collections.abc
 
 class ConvNDLayer(ConvolutionalLayer):
@@ -37,9 +37,9 @@ class ConvNDLayer(ConvolutionalLayer):
         self._tmp_grad = None
 
     def _normalize_single_param(self,
-                                value: Union[int, collections.abc.Sequence[int]],
-                                num_spatial_dims: int,
-                                param_name: str) -> tuple[int, ...]:
+                                 value: Union[int, collections.abc.Sequence[int]],
+                                 num_spatial_dims: int,
+                                 param_name: str) -> tuple[int, ...]:
         """
         Normalizes a single parameter (e.g., kernel size, stride) to a tuple.
 
@@ -57,12 +57,12 @@ class ConvNDLayer(ConvolutionalLayer):
         """
         if isinstance(value, int):
             if value <= 0:
-                 raise ValueError(f"{param_name} must be a positive integer, got {value}")
+                raise ValueError(f"{param_name} must be a positive integer, got {value}")
             return (value,) * num_spatial_dims
         # Check if it's a sequence (like tuple or list)
         elif isinstance(value, collections.abc.Sequence) and not isinstance(value, str):
             if not all(isinstance(x, int) and x > 0 for x in value):
-                 raise ValueError(f"{param_name} sequence must contain only positive integers, got {value}")
+                raise ValueError(f"{param_name} sequence must contain only positive integers, got {value}")
 
             len_value = len(value)
             if len_value == num_spatial_dims:
@@ -89,13 +89,13 @@ class ConvNDLayer(ConvolutionalLayer):
 
         Args:
             num_spatial_dims (int): The number of spatial dimensions in the input.
-                                   Must be positive.
+                                     Must be positive.
         """
         if self._normalized:
             return
 
         if not isinstance(num_spatial_dims, int) or num_spatial_dims <= 0:
-             raise ValueError(f"num_spatial_dims must be a positive integer, got {num_spatial_dims}")
+            raise ValueError(f"num_spatial_dims must be a positive integer, got {num_spatial_dims}")
 
         try:
             self.kernel_size = self._normalize_single_param(
@@ -164,7 +164,7 @@ class ConvNDLayer(ConvolutionalLayer):
         # Register filters and biases if they are initialized
         if self.filters is not None and self.biases is not None:
             self._reg_params()
-            
+
         super()._init_optimizer(optimizer)
 
     def _pad_input_nd(self, inputs: np.ndarray, kernel_size: Tuple[int, ...], stride: Tuple[int, ...], padding: str) -> np.ndarray:
@@ -186,7 +186,7 @@ class ConvNDLayer(ConvolutionalLayer):
         """
         num_spatial_dims = self._get_num_spatial_dims()
         if len(kernel_size) != num_spatial_dims or len(stride) != num_spatial_dims:
-             raise ValueError("kernel_size and stride must have length equal to num_spatial_dims")
+            raise ValueError("kernel_size and stride must have length equal to num_spatial_dims")
 
         # Initialize padding for Batch (0) and Channel (-1) dimensions
         padding_amounts = [(0, 0)] * (num_spatial_dims + 2) # Pre-allocate list size
@@ -194,7 +194,7 @@ class ConvNDLayer(ConvolutionalLayer):
         if padding == 'same':
             input_spatial_shape = inputs.shape[1:-1]
             if len(input_spatial_shape) != num_spatial_dims:
-                 raise ValueError("Input tensor spatial dimensions mismatch")
+                raise ValueError("Input tensor spatial dimensions mismatch")
 
             for i in range(num_spatial_dims):
                 input_len = input_spatial_shape[i]
@@ -224,7 +224,7 @@ class ConvNDLayer(ConvolutionalLayer):
 
         Args:
             input_shape (Tuple[int, ...]): The shape of the input tensor (including batch size).
-                                           Expected format: (batch_size, spatial_dim_1, ..., spatial_dim_N, in_channels)
+                                            Expected format: (batch_size, spatial_dim_1, ..., spatial_dim_N, in_channels)
             kernel_size (Tuple[int, ...]): The size of the convolutional kernel across spatial dimensions.
             stride (Tuple[int, ...]): The stride of the convolution across spatial dimensions.
             padding (str): The padding strategy ('valid' or 'same').
@@ -239,7 +239,7 @@ class ConvNDLayer(ConvolutionalLayer):
             ValueError: If kernel_size or stride dimensions don't match input spatial dimensions.
         """
         if len(input_shape) < 3:
-             raise ValueError(f"Input shape must have at least 3 dimensions (batch, spatial..., channels), got {input_shape}")
+            raise ValueError(f"Input shape must have at least 3 dimensions (batch, spatial..., channels), got {input_shape}")
 
         batch_size = input_shape[0]
         in_channels = input_shape[-1]
@@ -248,7 +248,7 @@ class ConvNDLayer(ConvolutionalLayer):
 
         # --- Input Validation ---
         if num_spatial_dims != self._get_num_spatial_dims():
-             raise ValueError(f"Input spatial dimensions ({num_spatial_dims}) does not match layer's expected spatial dimensions ({self._get_num_spatial_dims()})")
+            raise ValueError(f"Input spatial dimensions ({num_spatial_dims}) does not match layer's expected spatial dimensions ({self._get_num_spatial_dims()})")
         if len(kernel_size) != num_spatial_dims:
             raise ValueError(f"Kernel size dimensions ({len(kernel_size)}) must match input spatial dimensions ({num_spatial_dims})")
         if len(stride) != num_spatial_dims:
@@ -262,7 +262,7 @@ class ConvNDLayer(ConvolutionalLayer):
                 for i in range(num_spatial_dims)
             ]
         elif padding == 'valid':
-             output_spatial_shape = [
+            output_spatial_shape = [
                 (input_spatial_shape[i] - kernel_size[i]) // stride[i] + 1
                 for i in range(num_spatial_dims)
             ]
@@ -272,11 +272,11 @@ class ConvNDLayer(ConvolutionalLayer):
         # Check for invalid output dimensions
         for i, dim in enumerate(output_spatial_shape):
             if dim <= 0:
-                 raise ValueError(
+                raise ValueError(
                     f"Calculated output spatial dimension {i} is non-positive ({dim}). "
                     f"Input: {input_spatial_shape[i]}, Kernel: {kernel_size[i]}, Stride: {stride[i]}, Padding: {padding}. "
                     "Check kernel size and stride relative to input size."
-                 )
+                )
 
         return (batch_size, *output_spatial_shape, self.num_filters)
 
@@ -288,17 +288,17 @@ class ConvNDLayer(ConvolutionalLayer):
 
         Args:
             padded_inputs (np.ndarray): The padded input tensor.
-                Expected shape: (batch_size, padded_dim_1, ..., padded_dim_N, in_channels)
+                                        Expected shape: (batch_size, padded_dim_1, ..., padded_dim_N, in_channels)
 
         Returns:
             np.ndarray: A view of the input tensor representing the extracted patches.
-                Shape: (batch_size, out_dim_1, ..., out_dim_N, kernel_dim_1, ..., kernel_dim_N, in_channels)
+                        Shape: (batch_size, out_dim_1, ..., out_dim_N, kernel_dim_1, ..., kernel_dim_N, in_channels)
         """
         # Get input dimensions
         batch_size = padded_inputs.shape[0]
         in_channels = padded_inputs.shape[-1]
         num_spatial_dims = self._get_num_spatial_dims()
-        
+
         output_shape = self._get_output_shape(self.inputs.shape, self.kernel_size, self.stride, self.padding)
         output_spatial_shape = output_shape[1:-1] # Extract spatial dimensions from (batch, spatial..., filters)
 
@@ -326,6 +326,20 @@ class ConvNDLayer(ConvolutionalLayer):
             padded_inputs, shape=patches_shape, strides=patches_strides
         )
 
+    def _should_use_fftconvolve(self, input_shape: Tuple[int, ...], kernel_size: Tuple[int, ...]) -> bool:
+        """
+        Determines if fftconvolve should be used based on input and kernel size.
+        """
+        num_spatial_dims = self._get_num_spatial_dims()
+        if num_spatial_dims > 2:  # fftconvolve in scipy might not be optimal for very high dimensions
+            return False
+        input_spatial_dims = input_shape[1:-1]
+        kernel_volume = np.prod(kernel_size)
+        input_volume = np.prod(input_spatial_dims)
+        # Heuristic: use fftconvolve if kernel size is reasonably large compared to input
+        # This threshold might need tuning based on experimentation
+        return kernel_volume > 50 # Example threshold
+
     def forward(self, inputs: np.ndarray) -> np.ndarray:
         """
         Performs the forward pass of the convolutional layer.
@@ -344,28 +358,71 @@ class ConvNDLayer(ConvolutionalLayer):
         self._normalize_params(num_spatial_dims)
         self._initialize_filters_biases(inputs.shape)
 
-        # Pad the input tensor
-        padded_inputs = self._pad_input_nd(inputs, self.kernel_size, self.stride, self.padding)
+        use_fft = self._should_use_fftconvolve(inputs.shape, self.kernel_size)
 
-        # Extract patches and reshape for efficient matrix multiplication
-        patches = self._extract_patches(padded_inputs)
-        patches_reshaped = patches.reshape(-1, np.prod(self.kernel_size) * inputs.shape[-1])
-        filters_reshaped = self.filters.reshape(self.num_filters, -1).T
+        if use_fft:
+            output_shape = self._get_output_shape(inputs.shape, self.kernel_size, self.stride, self.padding)
+            output = np.zeros(output_shape, dtype=inputs.dtype)
+            batch_size = inputs.shape[0]
+            in_channels = inputs.shape[-1]
 
-        # Perform convolution using matrix multiplication
-        output_flat = patches_reshaped @ filters_reshaped + self.biases
+            for b in range(batch_size):
+                for out_f in range(self.num_filters):
+                    # Perform convolution for each output filter by summing over input channels
+                    conv_result = None
+                    for in_c in range(in_channels):
+                        input_slice = inputs[b, ..., in_c]
+                        filter_slice = self.filters[out_f, ..., in_c]
 
-        # Reshape the output to the correct dimensions
-        output_shape = self._get_output_shape(inputs.shape, self.kernel_size, self.stride, self.padding)
-        output = output_flat.reshape(output_shape)
+                        if num_spatial_dims == 1:
+                            mode = 'same' if self.padding == 'same' else 'valid'
+                            conv_single = fftconvolve(input_slice, filter_slice, mode=mode)
+                        elif num_spatial_dims == 2:
+                            mode = 'same' if self.padding == 'same' else 'valid'
+                            conv_single = fftconvolve(input_slice, filter_slice, mode=mode)
+                        else:
+                            # Handle higher dimensions - scipy's fftconvolve might not be ideal
+                            # Consider using numpy.fft.fftn and inverse fftn for more control
+                            raise NotImplementedError(f"fftconvolve for {num_spatial_dims} dimensions is not yet fully supported.")
 
-        # Apply activation function if provided
-        if self.activation_function:
-            self.signals = self.activation_function(output)
+                        if conv_result is None:
+                            conv_result = conv_single
+                        else:
+                            conv_result += conv_single
+
+                    # Add bias and store the result
+                    output[b, ..., out_f] = conv_result + self.biases[out_f]
+
+            if self.activation_function:
+                self.signals = self.activation_function(output)
+            else:
+                self.signals = output
+
+            return self.signals
+
         else:
-            self.signals = output
+            # Pad the input tensor
+            padded_inputs = self._pad_input_nd(inputs, self.kernel_size, self.stride, self.padding)
 
-        return self.signals
+            # Extract patches and reshape for efficient matrix multiplication
+            patches = self._extract_patches(padded_inputs)
+            patches_reshaped = patches.reshape(-1, np.prod(self.kernel_size) * inputs.shape[-1])
+            filters_reshaped = self.filters.reshape(self.num_filters, -1).T
+
+            # Perform convolution using matrix multiplication
+            output_flat = patches_reshaped @ filters_reshaped + self.biases
+
+            # Reshape the output to the correct dimensions
+            output_shape = self._get_output_shape(inputs.shape, self.kernel_size, self.stride, self.padding)
+            output = output_flat.reshape(output_shape)
+
+            # Apply activation function if provided
+            if self.activation_function:
+                self.signals = self.activation_function(output)
+            else:
+                self.signals = output
+
+            return self.signals
 
     def backward(self, grad: np.ndarray) -> np.ndarray:
         """
@@ -399,7 +456,7 @@ class ConvNDLayer(ConvolutionalLayer):
         # Reshape for efficient batch matrix multiplication
         patches_reshaped_t = np.transpose(patches_reshaped, (0, 2, 1))
         grad_reshaped_t = np.transpose(grad_reshaped, (0, 2, 1))
-        
+
         # Compute d_filters using batch matrix multiplication
         d_filters_batch = np.matmul(grad_reshaped_t, patches_reshaped)
         self.d_filters = np.mean(d_filters_batch, axis=0).reshape(self.filters.shape)
@@ -412,66 +469,114 @@ class ConvNDLayer(ConvolutionalLayer):
 
     def _compute_input_gradient(self, grad: np.ndarray) -> np.ndarray:
         """
-        Computes the gradient with respect to the input tensor.
-
-        Args:
-            grad (np.ndarray): The incoming gradient.
-
-        Returns:
-            np.ndarray: The gradient with respect to the input.
+        Computes the gradient with respect to the input tensor using optimized convolution.
         """
         num_spatial_dims = self._get_num_spatial_dims()
-        batch_size = self.inputs.shape[0]
+        batch_size, *spatial_dims, out_channels = grad.shape
         in_channels = self.inputs.shape[-1]
-        out_channels = self.filters.shape[0]  # Number of filters
-        
+
+        # For 2D convolutions, use optimized implementation
+        if num_spatial_dims == 2:
+            return self._compute_input_gradient_2d(grad)
+
+        # For other dimensions, use existing implementation
         # Flip filters for convolution transposition
         flipped_filters = np.flip(self.filters, axis=tuple(range(1, num_spatial_dims + 1)))
-        
-        # Transpose filters to have output channels as the last dimension
-        # New shape: (kernel_dims..., in_channels, out_channels)
-        transposed_filters = np.transpose(flipped_filters, 
-                                        (1, 2, 3, 0) if num_spatial_dims == 2 else 
-                                        ((1,) + tuple(range(2, num_spatial_dims + 1)) + (num_spatial_dims + 1, 0)))
+        transposed_filters = np.transpose(flipped_filters,
+                                            ((1,) + tuple(range(2, num_spatial_dims + 1)) +
+                                             (num_spatial_dims + 1, 0)))
 
-        # Pad the gradient if necessary
+        # Pad gradient if necessary
         if self.padding == 'valid':
             pad_width = [(0, 0)] + [(k - 1, k - 1) for k in self.kernel_size] + [(0, 0)]
             grad = np.pad(grad, pad_width, mode='constant')
 
-        # Dilate the gradient if the stride is greater than 1
+        # Dilate gradient if stride > 1
         if any(s > 1 for s in self.stride):
             grad = self._dilate_gradient(grad)
 
-        # Initialize the input gradient tensor
+        # Vectorized computation for other dimensions
         d_input = np.zeros_like(self.inputs)
-        
-        # Full convolution for each batch item 
         for b in range(batch_size):
-            for i_channel in range(in_channels):
-                # For each input channel, compute contribution from all output channels
-                for o_channel in range(out_channels):
-                    # Extract current grad channel
-                    curr_grad = grad[b, ..., o_channel]
-                    
-                    # Extract filter weights for current in/out channel pair
-                    curr_filter = transposed_filters[..., i_channel, o_channel]
-                    
-                    # Perform convolution and add to input gradient
-                    if num_spatial_dims == 2:
-                        d_input[b, ..., i_channel] += convolve2d(
-                            curr_grad, curr_filter, mode='full'
-                        )[:d_input.shape[1], :d_input.shape[2]]
-                    else:
-                        # For 1D, 3D or higher dimensions, use the general n-D convolution
-                        temp_conv = convolve(
-                            curr_grad, curr_filter, mode='full'
-                        )
-                        # Slice to match input dimensions
-                        slices = tuple(slice(0, d_input.shape[i+1]) for i in range(num_spatial_dims))
-                        d_input[b, *slices, i_channel] += temp_conv[slices]
+            d_input[b] = self._compute_single_batch_gradient(
+                grad[b], transposed_filters, in_channels, out_channels
+            )
 
         return d_input
+
+    def _compute_input_gradient_2d(self, grad: np.ndarray) -> np.ndarray:
+        """
+        Optimized input gradient computation for 2D convolutions.
+        """
+        batch_size, h, w, out_channels = grad.shape
+        input_h, input_w = self.inputs.shape[1:3]
+        in_channels = self.inputs.shape[-1]
+
+        # Prepare filters
+        flipped_filters = np.flip(np.flip(self.filters, axis=1), axis=2)
+        filters_reshaped = flipped_filters.transpose(1, 2, 3, 0)  # [h, w, in_c, out_c]
+
+        # Handle stride first
+        if any(s > 1 for s in self.stride):
+            grad = self._dilate_gradient(grad)
+
+        # Calculate necessary padding
+        if self.padding == 'valid':
+            h_pad, w_pad = self.kernel_size
+            grad = np.pad(grad, [(0,0), (h_pad-1, h_pad-1),
+                                    (w_pad-1, w_pad-1), (0,0)],
+                                mode='constant')
+
+        # Pre-allocate output array
+        d_input = np.zeros_like(self.inputs)
+
+        # Compute convolution for each batch and channel
+        for b in range(batch_size):
+            grad_b = grad[b]
+            for i in range(in_channels):
+                # Process each output channel and accumulate results
+                conv_results = []
+                for o in range(out_channels):
+                    curr_grad = grad_b[..., o]
+                    curr_filter = filters_reshaped[..., i, o]
+
+                    # Compute convolution with full output
+                    result = convolve2d(curr_grad, curr_filter, mode='valid')
+                    conv_results.append(result)
+
+                # Sum all results
+                total_result = np.sum(np.array(conv_results), axis=0)
+
+                # Calculate centering offsets
+                h_offset = (total_result.shape[0] - input_h) // 2
+                w_offset = (total_result.shape[1] - input_w) // 2
+
+                # Copy centered result to output
+                d_input[b, :input_h, :input_w, i] = total_result[
+                    h_offset:h_offset + input_h,
+                    w_offset:w_offset + input_w
+                ]
+
+        return d_input
+
+    def _compute_single_batch_gradient(self, grad_item, filters, in_channels, out_channels):
+        """
+        Helper method to compute gradient for a single batch item.
+        """
+        result = np.zeros(self.inputs.shape[1:])
+        for i in range(in_channels):
+            for o in range(out_channels):
+                if self._get_num_spatial_dims() == 2:
+                    result[..., i] += convolve2d(
+                        grad_item[..., o],
+                        filters[..., i, o],
+                        mode='valid'
+                    )
+                else:
+                    temp_conv = convolve(grad_item[..., o], filters[..., i, o], mode='valid')
+                    slices = tuple(slice(0, result.shape[j]) for j in range(self._get_num_spatial_dims()))
+                    result[..., i] += temp_conv[slices]
+        return result
 
     def _dilate_gradient(self, grad: np.ndarray) -> np.ndarray:
         """
