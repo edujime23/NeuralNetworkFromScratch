@@ -1,321 +1,350 @@
+# --- Imports ---
 import sys
 import os
-
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-import contextlib
-from network.functions import *
-from network.optimizer import *
-from inspect import signature
-from network.layer import DenseLayer
-from network.neuralNetwork import NeuralNetwork
-from network.utils.callbacks import Callback
-import numpy as np
-import matplotlib.pyplot as plt
-import multiprocessing as mp
 import time
 import queue
+import multiprocessing as mp
+import contextlib
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
 import cProfile  # Import the cProfile module
 import pstats  # For analyzing the profile data
 
-# --- Configuration for Live Plotting ---
-OUTPUT_PLOT_QUEUE_MAXSIZE = 5
-LOSS_PLOT_QUEUE_MAXSIZE = 5
-PLOT_UPDATE_INTERVAL = 0.1  # Minimum seconds between plot updates
+# --- Add project root to path ---
+# Ensure the network modules can be found
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Make sure binary_cross_entropy is imported or defined in your network.functions
+from network.functions import leaky_relu, sigmoid, binary_cross_entropy, linear
+from network.optimizer import Adam
+from network.layer import ConvNDLayer, FlattenLayer, DenseLayer
+from network.neuralNetwork import NeuralNetwork
+from network.utils.callbacks import Callback
 
-class LossCallback(Callback):
+
+# --- Configuration ---
+IMG_SIZE = 16
+CHANNELS = 1
+NUM_CLASSES = 1 # Binary classification (0: circle, 1: square)
+NUM_SAMPLES = 1000
+BATCH_SIZE = 32
+EPOCHS = 10000
+LEARNING_RATE = 1e-2
+PLOT_UPDATE_FREQ = 1 # Update plot every N epochs
+FEATURE_MAPS_TO_SHOW = 2 # How many feature maps to visualize
+
+# --- Data Generation ---
+def generate_shape_data(num_samples, img_size, channels):
+    """Generates images with circles or squares."""
+    images = np.zeros((num_samples, img_size, img_size, channels), dtype=np.float32)
+    labels = np.zeros((num_samples, 1), dtype=np.float32)
+    padding = max(1, img_size // 10)  # Dynamically adjust padding based on image size
+
+    for i in range(num_samples):
+        label = np.random.randint(0, 2)  # 0 for circle, 1 for square
+        labels[i] = label
+        center_x, center_y = np.random.randint(padding, img_size - padding, size=2)
+        size = np.random.randint(img_size // 5, img_size // 2 - padding)  # Adjust size range dynamically
+
+        if label == 0:  # Draw Circle
+            radius = size // 2
+            y, x = np.ogrid[:img_size, :img_size]
+            dist_from_center = np.sqrt((x - center_x)**2 + (y - center_y)**2)
+            mask = dist_from_center <= radius
+        else:  # Draw Square
+            half_size = size // 2
+            x_start, x_end = max(0, center_x - half_size), min(img_size, center_x + half_size)
+            y_start, y_end = max(0, center_y - half_size), min(img_size, center_y + half_size)
+            mask = np.zeros((img_size, img_size), dtype=bool)
+            mask[y_start:y_end, x_start:x_end] = True
+
+        images[i, :, :, 0] = mask.astype(np.float32)
+        images[i] += np.random.randn(img_size, img_size, channels).astype(np.float32) * 0.05
+        images[i] = np.clip(images[i], 0.0, 1.0)
+
+    return images, labels
+
+# --- Callbacks ---
+class PrintLossCallback(Callback):
+    """Prints loss information periodically."""
     def on_epoch_end(self, epoch, logs=None):
-        if epoch % 1 == 0:
-            print(f"Epoch {epoch+1}, Loss: {logs['loss']:.4f}, Val Loss: {logs.get('val_loss', 'N/A')}")
+        if epoch % 10 == 0 or epoch == EPOCHS - 1:
+            loss = logs.get('loss', 'N/A')
+            val_loss = logs.get('val_loss', 'N/A')
+            # Ensure loss is formatted correctly even if it's None or str
+            loss_str = f"{loss:.4f}" if isinstance(loss, (int, float)) else str(loss)
+            val_loss_str = f"{val_loss:.4f}" if isinstance(val_loss, (int, float)) else str(val_loss)
+            print(f"Epoch {epoch+1}/{EPOCHS}, Loss: {loss_str}, Val Loss: {val_loss_str}")
 
-def plot_process(plot_queue, inputs, target_func, train_inputs, train_outputs):
-    plt.ion()
-    fig, axs = plt.subplots(2, 1, figsize=(10, 12))  # 2 subplots for real and imaginary
-
-    # Plotting real and imaginary parts
-    line_objective_real, = axs[0].plot(inputs.real, target_func(inputs).real, label='Objective Real', color='blue')
-    line_predictions_real, = axs[0].plot(inputs.real, np.zeros_like(inputs.real), label='Prediction Real', color='red', linestyle='--', linewidth=2)
-    scatter_train_real = axs[0].scatter(train_inputs.real, train_outputs.real, label='Train Real', s=10, color='green', alpha=0.5)
-    axs[0].set_xlabel('Re(x)')
-    axs[0].set_ylabel('Re(y)')
-    axs[0].set_title('Real Part')
-    axs[0].legend()
-    axs[0].grid(True)
-
-    line_objective_imag, = axs[1].plot(inputs.real, target_func(inputs).imag, label='Objective Imag', color='blue')
-    line_predictions_imag, = axs[1].plot(inputs.real, np.zeros_like(inputs.real), label='Prediction Imag', color='red', linestyle='--', linewidth=2)
-    scatter_train_imag = axs[1].scatter(train_inputs.real, train_outputs.imag, label='Train Imag', s=10, color='green', alpha=0.5)
-    axs[1].set_xlabel('Re(x)')
-    axs[1].set_ylabel('Im(y)')
-    axs[1].set_title('Imaginary Part')
-    axs[1].legend()
-    axs[1].grid(True)
-
-    plt.tight_layout()  # Adjust layout to prevent overlap
-    plt.show(block=False)
-
-    last_update_time = time.time()
-    update_interval = 1 / 120  # Seconds between visual updates
-
-    while True:
-        try:
-            item = plot_queue.get(timeout=update_interval)
-            if item is None:  # Signal to stop
-                break
-            predictions = item
-
-            current_time = time.time()
-            if current_time - last_update_time > update_interval:
-                line_predictions_real.set_ydata(predictions.real)
-                line_predictions_imag.set_ydata(predictions.imag)
-                fig.canvas.draw_idle()
-                fig.canvas.flush_events()
-                last_update_time = current_time
-
-        except queue.Empty:
-            plt.pause(update_interval)
-        except Exception as e:
-            print(f"Error in plot process (output): {e}")
-            break
-
-    plt.close()
 
 class LivePlotCallback(Callback):
-    def __init__(self, plot_queue, inputs, model, update_frequency=10):
+    """Sends data to the plotting process."""
+    def __init__(self, plot_queue, sample_input, model, update_frequency=1):
         self.plot_queue = plot_queue
-        self.inputs = inputs
+        self.sample_input = sample_input
         self.model = model
         self.update_frequency = update_frequency
-        self.last_put_time = 0
+        self.epoch_losses = []
+        self.val_epoch_losses = []
 
     def on_epoch_end(self, epoch, logs=None):
-        if epoch % self.update_frequency == 0:
-            current_time = time.time()
-            with contextlib.suppress(queue.Full):
-                predictions = self.model.predict(self.inputs)
-                self.plot_queue.put_nowait(predictions)
-                self.last_put_time = current_time
+        self.epoch_losses.append(logs.get('loss'))
+        self.val_epoch_losses.append(logs.get('val_loss'))
 
-class LiveLossPlotCallback(Callback):
-    """Sends loss data to a separate process for live plotting."""
-    def __init__(self, plot_queue: mp.Queue):
-        self.plot_queue = plot_queue
-        self.train_losses_real = []
-        self.train_losses_imag = []
-        self.val_losses_real = []
-        self.val_losses_imag = []
-
-    def on_epoch_end(self, epoch, logs=None):
-        loss = logs.get('loss')
-        val_loss = logs.get('val_loss')
-
-        if loss is not None:
-            self.train_losses_real.append(np.real(loss))
-            self.train_losses_imag.append(np.imag(loss))
-        if val_loss is not None:
-            self.val_losses_real.append(np.real(val_loss))
-            self.val_losses_imag.append(np.imag(val_loss))
-
-        if loss is not None:
-            plot_data = {
-                'epoch': epoch + 1,
-                'train_loss_real': np.real(loss),
-                'train_loss_imag': np.imag(loss),
-                'val_loss_real': np.real(val_loss) if val_loss is not None else None,
-                'val_loss_imag': np.imag(val_loss) if val_loss is not None else None
-            }
+        if epoch % self.update_frequency == 0 or epoch == EPOCHS - 1:
             try:
-                self.plot_queue.put_nowait(plot_data)
-            except queue.Full:
-                pass # Skip if plot process is lagging
+                # Get Feature Maps
+                feature_maps = None
+                if self.model.layers and isinstance(self.model.layers[0], ConvNDLayer):
+                    try:
+                        first_conv_layer = self.model.layers[0]
+                        feature_map_model = NeuralNetwork([first_conv_layer], loss_function=None)
+                        if hasattr(first_conv_layer, 'weights') and hasattr(self.model.layers[0], 'weights'):
+                            feature_map_model.layers[0].weights = self.model.layers[0].weights
+                        if hasattr(first_conv_layer, 'bias') and hasattr(self.model.layers[0], 'bias'):
+                            feature_map_model.layers[0].bias = self.model.layers[0].bias
 
-def plot_loss_process(plot_queue: mp.Queue, num_epochs: int):
+                        feature_maps_raw = feature_map_model.predict(self.sample_input)
+                        num_maps = feature_maps_raw.shape[-1]
+                        maps_to_plot = min(num_maps, FEATURE_MAPS_TO_SHOW)
+                        feature_maps = feature_maps_raw[0, :, :, :maps_to_plot]
+
+                    except Exception as e:
+                        # print(f"\nWarning: Could not get feature maps: {e}") # Optional debug
+                        dummy_map_shape = (self.sample_input.shape[1], self.sample_input.shape[2], FEATURE_MAPS_TO_SHOW)
+                        feature_maps = np.random.rand(*dummy_map_shape) * 0.1
+
+                # Get Prediction
+                prediction = self.model.predict(self.sample_input)[0, 0]
+
+                # Prepare Data for Queue
+                plot_data = {
+                    'epoch': epoch + 1,
+                    'losses': list(self.epoch_losses),
+                    'val_losses': list(self.val_epoch_losses),
+                    'input_sample': self.sample_input[0, :, :, 0],
+                    'feature_maps': feature_maps,
+                    'prediction': prediction
+                }
+                self.plot_queue.put_nowait(plot_data)
+
+            except queue.Full:
+                pass
+            except Exception as e:
+                print(f"\nError in LivePlotCallback: {e}")
+
+
+# --- Plotting Process ---
+def plot_process(plot_queue, num_epochs, sample_label):
     """Target function for the plotting process."""
     plt.ion()
-    fig, axs = plt.subplots(2, 1, figsize=(10, 8))  # 2 subplots for real and imaginary loss
 
-    # Real part of the loss
-    ax_real = axs[0]
-    ax_real.set_xlabel('Epoch')
-    ax_real.set_ylabel('Real Loss')
-    ax_real.set_title('Live Training and Validation Loss (Real)')
-    ax_real.grid(True)
-    line_train_real, = ax_real.plot([], [], label='Training Loss (Real)', color='blue')
-    line_val_real, = ax_real.plot([], [], label='Validation Loss (Real)', color='orange')
-    ax_real.legend()
+    fig = plt.figure(figsize=(12, 8))
+    # Corrected GridSpec: Add 1 column for the input/pred plots
+    gs = gridspec.GridSpec(3, FEATURE_MAPS_TO_SHOW + 1, figure=fig)
 
-    # Imaginary part of the loss
-    ax_imag = axs[1]
-    ax_imag.set_xlabel('Epoch')
-    ax_imag.set_ylabel('Imaginary Loss')
-    ax_imag.set_title('Live Training and Validation Loss (Imaginary)')
-    ax_imag.grid(True)
-    line_train_imag, = ax_imag.plot([], [], label='Training Loss (Imaginary)', color='blue', linestyle='--')
-    line_val_imag, = ax_imag.plot([], [], label='Validation Loss (Imaginary)', color='orange', linestyle='--')
-    ax_imag.legend()
+    ax_loss = fig.add_subplot(gs[0, :])     # Loss plot spans top row
+    ax_input = fig.add_subplot(gs[1, 0])     # Input image in row 1, col 0
+    ax_pred = fig.add_subplot(gs[2, 0])      # Prediction text in row 2, col 0
 
-    epochs_data = []
-    train_loss_real_data = []
-    train_loss_imag_data = []
-    val_loss_real_data = []
-    val_loss_imag_data = []
+    # Place feature maps in columns 1 onwards, spanning rows 1 and 2
+    ax_features = []
+    for i in range(FEATURE_MAPS_TO_SHOW):
+        ax = fig.add_subplot(gs[1:, i + 1]) # Corrected: Span rows 1-2, column i+1
+        ax_features.append(ax)
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.set_title(f'Map {i+1}', fontsize=8)
 
-    plt.tight_layout()
+    # Initialize Plots
+    line_loss, = ax_loss.plot([], [], 'r-', label='Training Loss')
+    line_val_loss, = ax_loss.plot([], [], 'b--', label='Validation Loss')
+    ax_loss.set_xlim(0, num_epochs)
+    ax_loss.set_ylim(0, 1.0)
+    ax_loss.set_xlabel('Epoch')
+    ax_loss.set_ylabel('Loss')
+    ax_loss.set_title('Training Progress')
+    ax_loss.legend()
+    ax_loss.grid(True)
+
+    img_input = ax_input.imshow(np.zeros((IMG_SIZE, IMG_SIZE)), cmap='viridis', vmin=0, vmax=1)
+    true_label_str = "Circle" if sample_label == 0 else "Square"
+    ax_input.set_title(f'Sample Input (True: {true_label_str})')
+    ax_input.set_xticks([])
+    ax_input.set_yticks([])
+
+    img_features = [ax.imshow(np.zeros((IMG_SIZE, IMG_SIZE)), cmap='viridis') for ax in ax_features]
+
+    pred_text = ax_pred.text(0.5, 0.5, 'Pred: N/A', horizontalalignment='center', verticalalignment='center', fontsize=12)
+    ax_pred.axis('off')
+
+    fig.tight_layout(pad=2.0)
     plt.show(block=False)
+
+    # Update Loop
     last_update_time = time.time()
+    update_interval = 0.1
 
     while True:
         try:
-            plot_data = plot_queue.get(timeout=0.1)
+            plot_data = plot_queue.get(timeout=0.05)
+
             if plot_data is None:
                 break
 
             current_time = time.time()
-            if current_time - last_update_time < PLOT_UPDATE_INTERVAL and plot_data.get('epoch', 0) < num_epochs:
+            if current_time - last_update_time < update_interval and plot_data['epoch'] < num_epochs:
                 continue
 
-            epoch = plot_data.get('epoch')
-            train_loss_real = plot_data.get('train_loss_real')
-            train_loss_imag = plot_data.get('train_loss_imag')
-            val_loss_real = plot_data.get('val_loss_real')
-            val_loss_imag = plot_data.get('val_loss_imag')
+            # Update Plot Data
+            epochs = list(range(1, plot_data['epoch'] + 1))
+            losses = [l for l in plot_data['losses'] if l is not None]
+            val_losses = [l for l in plot_data['val_losses'] if l is not None]
 
-            if epoch is not None and train_loss_real is not None and train_loss_imag is not None:
-                epochs_data.append(epoch)
-                train_loss_real_data.append(train_loss_real)
-                train_loss_imag_data.append(train_loss_imag)
-                line_train_real.set_xdata(epochs_data)
-                line_train_real.set_ydata(train_loss_real_data)
-                line_train_imag.set_xdata(epochs_data)
-                line_train_imag.set_ydata(train_loss_imag_data)
+            if losses:
+                line_loss.set_data(epochs[:len(losses)], losses)
+            if val_losses:
+                line_val_loss.set_data(epochs[:len(val_losses)], val_losses)
 
-            if epoch is not None and val_loss_real is not None and val_loss_imag is not None:
-                val_loss_real_data.append(val_loss_real)
-                val_loss_imag_data.append(val_loss_imag)
-                line_val_real.set_xdata(epochs_data)
-                line_val_real.set_ydata(val_loss_real_data)
-                line_val_imag.set_xdata(epochs_data)
-                line_val_imag.set_ydata(val_loss_imag_data)
+            if combined_losses := losses + val_losses:
+                min_l = min(combined_losses)
+                max_l = max(combined_losses)
+                y_min = max(0, min_l - 0.1 * (max_l - min_l))
+                y_max = max_l + 0.1 * (max_l - min_l)
+                ax_loss.set_ylim(y_min, max(y_max, 0.1))
+            ax_loss.relim()
+            ax_loss.autoscale_view(True, True, True)
 
-            ax_real.relim()
-            ax_real.autoscale_view()
-            ax_imag.relim()
-            ax_imag.autoscale_view()
+            img_input.set_data(plot_data['input_sample'])
+            img_input.autoscale()
+
+            feature_maps = plot_data['feature_maps']
+            if feature_maps is not None:
+                for i, im_ax in enumerate(img_features):
+                    if i < feature_maps.shape[-1]:
+                        feature_map_data = feature_maps[:, :, i]
+                        im_ax.set_data(feature_map_data)
+                        im_ax.set_clim(vmin=feature_map_data.min(), vmax=feature_map_data.max())
+                    else:
+                        im_ax.set_data(np.zeros((IMG_SIZE, IMG_SIZE)))
+                        im_ax.set_clim(vmin=0, vmax=1)
+
+            pred_val = plot_data['prediction']
+            pred_label = "Square" if pred_val >= 0.5 else "Circle"
+            pred_text.set_text(f'Pred: {pred_label} ({pred_val:.2f})')
+
+            # Redraw Canvas
             fig.canvas.draw_idle()
             fig.canvas.flush_events()
             last_update_time = current_time
 
         except queue.Empty:
-            plt.pause(0.01)
+            plt.pause(0.05)
         except Exception as e:
-            print(f"Error in plot process (loss): {e}")
+            print(f"Error in plot process: {e}")
             import traceback
             traceback.print_exc()
             break
 
     plt.ioff()
-    print("Loss plotting process finished. Close the plot window manually.")
+    print("Plotting process finished. Close the plot window manually.")
     plt.show(block=True)
     plt.close(fig)
 
-def func(x):
-    return x * 1j
 
+# --- Main Execution ---
 if __name__ == "__main__":
-    mp.set_start_method('spawn', force=True)
+    try:
+        mp.set_start_method('spawn', force=True)
+    except RuntimeError as e:
+        print(f"Note: Could not set multiprocessing start method to 'spawn'. Using default. ({e})")
 
-    num_samples = 5000
-    inputs = np.linspace(0, 10, num_samples).reshape(-1, 1)
-    outputs = func(inputs)
+    print("Generating training data...")
+    X_train, y_train = generate_shape_data(NUM_SAMPLES, IMG_SIZE, CHANNELS)
+    print("Generating validation data...")
+    X_val, y_val = generate_shape_data(NUM_SAMPLES // 4, IMG_SIZE, CHANNELS)
 
-    input_dims = signature(func).parameters.__len__()
-    out_dims = np.array(func(*np.random.randn(input_dims))).size
+    sample_idx = np.random.randint(0, X_val.shape[0])
+    sample_input_vis = X_val[sample_idx:sample_idx+1]
+    sample_label_vis = y_val[sample_idx, 0]
 
-    train_inputs = inputs
-    train_outputs = outputs
+    # Define Model
+    layers = [
+        ConvNDLayer(num_filters=8, kernel_size=(3, 3), stride=1, activation_function=leaky_relu, input_shape=(IMG_SIZE, IMG_SIZE, CHANNELS)),
+        ConvNDLayer(num_filters=16, kernel_size=(3, 3), stride=2, activation_function=leaky_relu),
+        FlattenLayer(),
+        DenseLayer(32, activation_function=leaky_relu),
+        DenseLayer(NUM_CLASSES, activation_function=sigmoid) # Sigmoid for binary output
+    ]
 
-    layers = [DenseLayer(16, activation_function=leaky_relu) for _ in range(1)]
-    layers.extend([DenseLayer(out_dims, activation_function=linear)])
+    # Compile Model
+    optimizer = Adam(learning_rate=LEARNING_RATE)
+    loss_function = binary_cross_entropy # Corrected: Use binary loss for sigmoid output
+    nn = NeuralNetwork(layers)
+    nn.compile(optimizer=optimizer, loss=loss_function)
+    print("Model compiled.")
 
-    adam = Adam(learning_rate=1e-4, gradient_clip=1)
-    adamW = AdamW(learning_rate=1e-4, weight_decay=0, gradient_clip=None)
-    amsgrad = AMSGrad(learning_rate=1e-6, weight_decay=0, gradient_clip=None)
-    sgd = SGD(learning_rate=1e-15, momentum=1/2, nesterov=True)
-    rmsprop = RMSprop(learning_rate=1e-6, rho=0.9, gradient_clip=None)
+    # Setup Plotting
+    plot_queue = mp.Queue(maxsize=5)
+    print_loss_callback = PrintLossCallback()
+    live_plot_callback = LivePlotCallback(plot_queue, sample_input_vis, nn, update_frequency=PLOT_UPDATE_FREQ)
 
-    nn = NeuralNetwork(layers, gradient_clip=1, l1_lambda=1e-2, l2_lambda=1e-2, use_complex=True)
-
-    nn.compile(optimizer=adam, loss=mean_squared_error)
-
-    output_plot_queue = mp.Queue(maxsize=OUTPUT_PLOT_QUEUE_MAXSIZE)
-    loss_plot_queue = mp.Queue(maxsize=LOSS_PLOT_QUEUE_MAXSIZE)
-
-    live_output_plot_callback = LivePlotCallback(output_plot_queue, inputs, nn, update_frequency=1)
-    live_loss_plot_callback = LiveLossPlotCallback(loss_plot_queue)
-    loss_callback = LossCallback()
-
-    output_plot_process = mp.Process(
+    # Create and start the plotting process
+    plot_proc = mp.Process(
         target=plot_process,
-        args=(output_plot_queue, inputs, func, train_inputs, train_outputs),
+        args=(plot_queue, EPOCHS, sample_label_vis),
         daemon=True
     )
-    print("Starting output plotting process...")
-    output_plot_process.start()
+    print("Starting plotting process...")
+    plot_proc.start()
 
-    loss_plot_process = mp.Process(
-        target=plot_loss_process,
-        args=(loss_plot_queue, 1000),  # Use the number of epochs from fit
-        daemon=True
-    )
-    print("Starting loss plotting process...")
-    loss_plot_process.start()
-
+    # Enable profiling
     profiler = cProfile.Profile()
     profiler.enable()
 
+    # Train Model
+    print("Starting training...")
     try:
-        nn.fit(
-            train_inputs,
-            train_outputs,
-            epochs=int(1e9),  # Reduce epochs for profiling to get a manageable output
-            batch_size=num_samples // 64,
-            callbacks=[loss_callback, live_output_plot_callback, live_loss_plot_callback],
-            restore_best_weights=True,
+        history = nn.fit(
+            X_train, y_train,
+            epochs=EPOCHS,
+            batch_size=BATCH_SIZE,
+            validation_data=(X_val, y_val),
+            callbacks=[print_loss_callback, live_plot_callback],
+            restore_best_weights=False
         )
+        print("\nTraining finished.")
+
     except KeyboardInterrupt:
-        print("\nTraining interrupted by user")
+        print("\nTraining interrupted by user.")
+    except Exception as e:
+        print(f"\nAn error occurred during training: {e}")
+        import traceback
+        traceback.print_exc()
     finally:
+        # Disable profiling and print results
         profiler.disable()
         stats = pstats.Stats(profiler).sort_stats('tottime')
         print("\n--- cProfile Analysis ---")
         stats.print_stats(20)  # Print the top 20 functions by total time
 
-        # Cleanup output plotting process
-        print("Cleaning up output plotting process...")
+        # Cleanup
+        print("Cleaning up plotting process...")
         try:
-            output_plot_queue.put_nowait(None)
+            plot_queue.put_nowait(None)
         except queue.Full:
-            pass
-        output_plot_process.join(timeout=5.0)
-        if output_plot_process.is_alive():
-            print("Output plot process did not exit gracefully, terminating...")
-            output_plot_process.terminate()
-            output_plot_process.join(timeout=1.0)
-        output_plot_queue.close()
-        output_plot_queue.join_thread()
+            while not plot_queue.empty():
+                try: plot_queue.get_nowait()
+                except queue.Empty: break
+            try: plot_queue.put(None, timeout=1.0)
+            except queue.Full: print("Warning: Could not send termination signal.")
 
-        # Cleanup loss plotting process
-        print("Cleaning up loss plotting process...")
-        try:
-            loss_plot_queue.put_nowait(None)
-        except queue.Full:
-            pass
-        loss_plot_process.join(timeout=5.0)
-        if loss_plot_process.is_alive():
-            print("Loss plot process did not exit gracefully, terminating...")
-            loss_plot_process.terminate()
-            loss_plot_process.join(timeout=1.0)
-        loss_plot_queue.close()
-        loss_plot_queue.join_thread()
+        plot_proc.join(timeout=2.0)
+        if plot_proc.is_alive():
+            print("Plot process did not exit gracefully, terminating...")
+            plot_proc.terminate()
+            plot_proc.join(timeout=1.0)
 
+        plot_queue.close()
+        plot_queue.join_thread()
         print("Cleanup complete.")

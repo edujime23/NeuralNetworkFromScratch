@@ -8,6 +8,8 @@ import contextlib
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
+import cProfile  # Import the cProfile module
+import pstats  # For analyzing the profile data
 
 # --- Add project root to path ---
 # Ensure the network modules can be found
@@ -98,9 +100,9 @@ class LivePlotCallback(Callback):
                         first_conv_layer = self.model.layers[0]
                         feature_map_model = NeuralNetwork([first_conv_layer], loss_function=None)
                         if hasattr(first_conv_layer, 'weights') and hasattr(self.model.layers[0], 'weights'):
-                           feature_map_model.layers[0].weights = self.model.layers[0].weights
+                            feature_map_model.layers[0].weights = self.model.layers[0].weights
                         if hasattr(first_conv_layer, 'bias') and hasattr(self.model.layers[0], 'bias'):
-                           feature_map_model.layers[0].bias = self.model.layers[0].bias
+                            feature_map_model.layers[0].bias = self.model.layers[0].bias
 
                         feature_maps_raw = feature_map_model.predict(self.sample_input)
                         num_maps = feature_maps_raw.shape[-1]
@@ -141,7 +143,7 @@ def plot_process(plot_queue, num_epochs, sample_label):
     # Corrected GridSpec: Add 1 column for the input/pred plots
     gs = gridspec.GridSpec(3, FEATURE_MAPS_TO_SHOW + 1, figure=fig)
 
-    ax_loss = fig.add_subplot(gs[0, :])      # Loss plot spans top row
+    ax_loss = fig.add_subplot(gs[0, :])     # Loss plot spans top row
     ax_input = fig.add_subplot(gs[1, 0])     # Input image in row 1, col 0
     ax_pred = fig.add_subplot(gs[2, 0])      # Prediction text in row 2, col 0
 
@@ -192,7 +194,7 @@ def plot_process(plot_queue, num_epochs, sample_label):
 
             current_time = time.time()
             if current_time - last_update_time < update_interval and plot_data['epoch'] < num_epochs:
-                 continue
+                continue
 
             # Update Plot Data
             epochs = list(range(1, plot_data['epoch'] + 1))
@@ -200,9 +202,9 @@ def plot_process(plot_queue, num_epochs, sample_label):
             val_losses = [l for l in plot_data['val_losses'] if l is not None]
 
             if losses:
-                 line_loss.set_data(epochs[:len(losses)], losses)
+                line_loss.set_data(epochs[:len(losses)], losses)
             if val_losses:
-                 line_val_loss.set_data(epochs[:len(val_losses)], val_losses)
+                line_val_loss.set_data(epochs[:len(val_losses)], val_losses)
 
             if combined_losses := losses + val_losses:
                 min_l = min(combined_losses)
@@ -224,8 +226,8 @@ def plot_process(plot_queue, num_epochs, sample_label):
                         im_ax.set_data(feature_map_data)
                         im_ax.set_clim(vmin=feature_map_data.min(), vmax=feature_map_data.max())
                     else:
-                         im_ax.set_data(np.zeros((IMG_SIZE, IMG_SIZE)))
-                         im_ax.set_clim(vmin=0, vmax=1)
+                        im_ax.set_data(np.zeros((IMG_SIZE, IMG_SIZE)))
+                        im_ax.set_clim(vmin=0, vmax=1)
 
             pred_val = plot_data['prediction']
             pred_label = "Square" if pred_val >= 0.5 else "Circle"
@@ -255,7 +257,7 @@ if __name__ == "__main__":
     try:
         mp.set_start_method('spawn', force=True)
     except RuntimeError as e:
-         print(f"Note: Could not set multiprocessing start method to 'spawn'. Using default. ({e})")
+        print(f"Note: Could not set multiprocessing start method to 'spawn'. Using default. ({e})")
 
     print("Generating training data...")
     X_train, y_train = generate_shape_data(NUM_SAMPLES, IMG_SIZE, CHANNELS)
@@ -296,6 +298,10 @@ if __name__ == "__main__":
     print("Starting plotting process...")
     plot_proc.start()
 
+    # Enable profiling
+    profiler = cProfile.Profile()
+    profiler.enable()
+
     # Train Model
     print("Starting training...")
     try:
@@ -316,6 +322,12 @@ if __name__ == "__main__":
         import traceback
         traceback.print_exc()
     finally:
+        # Disable profiling and print results
+        profiler.disable()
+        stats = pstats.Stats(profiler).sort_stats('tottime')
+        print("\n--- cProfile Analysis ---")
+        stats.print_stats(20)  # Print the top 20 functions by total time
+
         # Cleanup
         print("Cleaning up plotting process...")
         try:

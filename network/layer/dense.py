@@ -75,7 +75,7 @@ class DenseLayer(Layer):
         batch_size = self.inputs.shape[0]
 
         # Precompute activation derivative and delta
-        activation_deriv = derivative(self.activation_function, self.signals, complex_diff=self.use_complex)
+        activation_deriv = derivative(self.activation_function, self.signals, complex_diff=False)
         delta = grad * activation_deriv * self.threshold
 
         # Efficiently compute gradients

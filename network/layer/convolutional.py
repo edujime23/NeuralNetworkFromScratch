@@ -369,7 +369,7 @@ class ConvNDLayer(ConvolutionalLayer):
 
     def backward(self, grad: np.ndarray) -> np.ndarray:
         """
-        Performs the backward pass of the convolutional layer.
+        Performs the backward pass of the convolutional layer using vectorized operations.
 
         Args:
             grad (np.ndarray): The incoming gradient from the next layer.
@@ -377,36 +377,37 @@ class ConvNDLayer(ConvolutionalLayer):
         Returns:
             np.ndarray: The gradient to be passed to the previous layer.
         """
-        inputs = self.inputs
-        batch_size = inputs.shape[0]
-        in_channels = inputs.shape[-1]
-        num_filters = self.filters.shape[0]
-        num_spatial_dims = self._get_num_spatial_dims()
-
         # Apply the derivative of the activation function if it exists
         if self.activation_function:
-            derivative_values = derivative(self.activation_function, self.signals, arg_index=0, complex_diff=self.use_complex)
+            derivative_values = derivative(self.activation_function, self.signals, arg_index=0, complex_diff=False)
             grad = grad * derivative_values
 
-        # Pad the input tensor
-        padded_input = self._pad_input_nd(inputs, self.kernel_size, self.stride, self.padding)
-        # Extract patches from the padded input
+        batch_size = self.inputs.shape[0]
+        num_spatial_dims = self._get_num_spatial_dims()
+
+        # Pad the input tensor and extract patches (reusing existing methods)
+        padded_input = self._pad_input_nd(self.inputs, self.kernel_size, self.stride, self.padding)
         patches = self._extract_patches(padded_input)
 
-        num_patches = np.prod(patches.shape[1:1+num_spatial_dims])
+        # Vectorized reshape operations
+        patches_shape = patches.shape
+        num_patches = np.prod(patches_shape[1:1+num_spatial_dims])
         patches_reshaped = patches.reshape(batch_size, num_patches, -1)
-        grad_reshaped = grad.reshape(batch_size, num_patches, num_filters)
+        grad_reshaped = grad.reshape(batch_size, num_patches, self.num_filters)
 
-        # Calculate the gradient of the filters
-        self.d_filters = np.zeros_like(self.filters)
-        for b in range(batch_size):
-            d_filters_b = np.matmul(grad_reshaped[b].transpose(1, 0), patches_reshaped[b])
-            self.d_filters += d_filters_b.reshape(self.filters.shape) / batch_size
+        # Vectorized filter gradient computation
+        # Reshape for efficient batch matrix multiplication
+        patches_reshaped_t = np.transpose(patches_reshaped, (0, 2, 1))
+        grad_reshaped_t = np.transpose(grad_reshaped, (0, 2, 1))
+        
+        # Compute d_filters using batch matrix multiplication
+        d_filters_batch = np.matmul(grad_reshaped_t, patches_reshaped)
+        self.d_filters = np.mean(d_filters_batch, axis=0).reshape(self.filters.shape)
 
-        # Calculate the gradient of the biases
-        self.d_biases = np.mean(np.sum(grad, axis=tuple(range(1, grad.ndim-1))), axis=0)
+        # Vectorized bias gradient computation
+        self.d_biases = np.mean(grad.reshape(batch_size, -1, self.num_filters).sum(axis=1), axis=0)
 
-        # Compute the gradient with respect to the input
+        # Compute input gradient
         return self._compute_input_gradient(grad)
 
     def _compute_input_gradient(self, grad: np.ndarray) -> np.ndarray:
